@@ -17,3 +17,5 @@ I should write some code to do a few things:
 - check if the intrawell/interwell distances within a microscope as smaller/larger
 - and then check within microscope is smaller than across
 - distance in PCA mb??
+
+1/21/24: Somehow the well-level differences are gone T_T
