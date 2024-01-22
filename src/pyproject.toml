@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "HPA_CC"
+version = "0.0.0"
+requires-python = ">= 3.9"
+dependencies = [
+]
