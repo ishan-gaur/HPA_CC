@@ -32,6 +32,7 @@ class FucciCellCycle:
         self.S_G2_PROP = self.S_G2_LEN / self.TOT_LEN + self.G1_S_PROP
 
 def intensities_to_polar_pseudotime(log_intensities, center=None):
+    # converts FUCCI GMNN and CDT1 intensities from cartesian (x, y) to polar (r, theta) coordinates
     if center is None:
         center_estimate = np.mean(log_intensities, axis=0)
         center_est2 = least_squares(f_2, center_estimate, args=(log_intensities[:, 0], log_intensities[:, 1]))
@@ -44,6 +45,7 @@ def intensities_to_polar_pseudotime(log_intensities, center=None):
     return fucci_time
 
 def calculate_pseudotime(pol_data, centered_data, save_dir=""):
+    # converts the polar coordinates (with no clear 0 time) to a 0->1 pseudotime
     pol_sort_inds = np.argsort(pol_data[1])
     pol_sort_rho = pol_data[0][pol_sort_inds]
     pol_sort_phi = pol_data[1][pol_sort_inds]
@@ -85,7 +87,7 @@ def calculate_pseudotime(pol_data, centered_data, save_dir=""):
     return fucci_time
 
 def stretch_time(time_data,nbins=1000):
-    '''This function is supposed to create uniform density space'''
+    # This function creates a uniform across pseudotime
     n, bins, patches = plt.hist(time_data, histedges_equalN(time_data, nbins), density=True)
     tmp_time_data = deepcopy(time_data)
     trans_time = np.zeros([len(time_data)])
