@@ -13,4 +13,7 @@ fucci_ds = DatasetFS(FUCCI_DS_PATH)
 images_per_well = [len(fucci_ds.images_in_well(well)) for well in fucci_ds.well_list]
 plt.hist(images_per_well)
 plt.savefig(OUTPUT_DIR / "images_per_well.png")
+plt.xlabel("Number of images per well")
+plt.ylabel("Number of wells")
+plt.title("Distribution of Images per Well in the FUCCI dataset")
 plt.close()
