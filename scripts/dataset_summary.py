@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """Produces a summary of the intensity statistics for the FUCCI dataset as specified in the config file.
 Plots PCAs for the images, colored by each well and scope. Also plots PCAs for the average intensity of each well.
-Finally, it writes a sorted list of the image directories to a pickle file, to be used by other scripts as well.
+Then, it writes a sorted list of the image directories to a pickle file, to be used by other scripts as well.
+
+It also creates PCA plots of the well- and image-level intensity distributions for each microscope in the dataset.
+This is primarily useful in designing useful training splits for the pseudotime models down the line.
 """
 from pathlib import Path
 import pickle as pkl
@@ -17,15 +20,11 @@ from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from config import FUCCI_DS_PATH, HPA_DS_PATH
-from HPA_CC.utils.dataset import Dataset
+from config import FUCCI_DS_PATH, HPA_DS_PATH, OUTPUT_DIR
+from HPA_CC.data.dataset import DatasetFS
 
-fucci_ds = Dataset(FUCCI_DS_PATH)
-hpa_ds = Dataset(HPA_DS_PATH)
-
-OUTPUT_DIR = Path.cwd() / "scripts" / "output"
-if not OUTPUT_DIR.exists():
-    OUTPUT_DIR.mkdir()
+fucci_ds = DatasetFS(FUCCI_DS_PATH)
+hpa_ds = DatasetFS(HPA_DS_PATH)
 
 well_type_dict = {}
 

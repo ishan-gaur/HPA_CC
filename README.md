@@ -5,10 +5,17 @@ Subset of HPA data covered by CC data can be found here: TODO
 FUCCI U2OS data can be found here: TODO (should this be by well or the original data? will need scripts in this repo for the conversion if not)
 
 # FUCCI Dataset
-IF images of U2-OS FUCCI cells, with four channels: DAPI, $\gamma$-tubulin, Geminin (GMNN), and CDT1. GMNN and CDT1 are cell cycle markers. The dataset starts with 
+IF images of U2-OS FUCCI cells, with four channels: DAPI, $\gamma$-tubulin, Geminin (GMNN), and CDT1. GMNN and CDT1 are cell cycle markers.
+Datasets are organized into two levels: wells and images. The datasets (HPA dataset too) are preprocessed using the preprocessing.py script. This allows users to specify how to remove artifacts from the segmentations, how large to make the crops, what strategies to use for normalization and filtering out of focus samples, etc.
+
+# Scripts
+## dataset_summary.py
+This just produces a summary of the numeber of images per microscope type in the FUCCI and HPA datasets. It also creates PCA plots of the well- and image-level intensity distributions for each microscope in the dataset. This is primarily useful in designing useful training splits for the pseudotime models down the line.
+
+## pseudotime_labels.py
 
 # DevLog
-1/23/24: __TODO__ need to use the dataset class from the HPA-embedding repo and add the percentile stuff there directly so I don't have a custom implementation in the dataset_summary script.
+1/23/24: __TODO__ need to use the dataset class from the HPA-embedding repo and add the percentile stuff there directly so I don't have a custom implementation in the dataset_summary script. Need to run the dataset pipeline on the HPA dataset again. Also need to document its use.
 
 1/21/24: Somehow the well-level differences are gone T_T; looks like it was because I forgot to exclude empty pixels
 
