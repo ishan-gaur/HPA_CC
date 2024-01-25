@@ -12,6 +12,7 @@ from HPA_CC.data.dataset import DatasetFS
 from HPA_CC.utils.pseudotime import intensities_to_pseudotime
 import matplotlib.pyplot as plt
 from config import FUCCI_DS_PATH, FUCCI_NAME, OUTPUT_DIR
+from multiprocessing import Pool
 
 fucci_ds = DatasetFS(FUCCI_DS_PATH)
 
@@ -28,10 +29,7 @@ n_wells = len(fucci_ds.well_list)
 if (OUTPUT_DIR / "well_intensity_cache.pkl").exists() and False:
     cells_per_well, well_intensities, well_pseudotimes = pkl.load(open(OUTPUT_DIR / "well_intensity_cache.pkl", "rb"))
 else:
-    cells_per_well = []
-    well_intensities = []
-    well_pseudotimes = []
-    for well in tqdm(fucci_ds.well_list, total=n_wells, desc="Plotting Pseudotime distributions"):
+    def process_well(well):
         sc_images = torch.load(well / f"images_{FUCCI_NAME}.pt") # Cells x Channels x H x W
         nuclei_masks = torch.load(well / f"nuclei_masks_{FUCCI_NAME}.pt") # Cells x H x W
         sc_nuclei = sc_images * nuclei_masks[:, None]
@@ -42,10 +40,13 @@ else:
         log_mean_CDT1 = torch.log(mean_intensities[:, 1] + min_nonzero_CDT1)
         log_mean_fucci_intensities = torch.stack((log_mean_GMNN, log_mean_CDT1), dim=1)
         pseudotime, center = intensities_to_pseudotime(log_mean_fucci_intensities.numpy())
-        cells_per_well.append(len(sc_images))
-        well_intensities.append(log_mean_fucci_intensities)
-        # well_intensities.append(log_mean_fucci_intensities - center)
-        well_pseudotimes.append(pseudotime)
+        return len(sc_images), log_mean_fucci_intensities, pseudotime
+
+    with Pool(1) as pool:
+        results = list(tqdm(pool.imap(process_well, fucci_ds.well_list), total=n_wells, desc="Plotting Pseudotime distributions"))
+
+    cells_per_well, well_intensities, well_pseudotimes = zip(*results)
+
     pkl.dump((cells_per_well, well_intensities, well_pseudotimes), open(OUTPUT_DIR / "well_intensity_cache.pkl", "wb"))
 
 print(n_wells, "wells")

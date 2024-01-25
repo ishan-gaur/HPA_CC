@@ -48,58 +48,65 @@ def min_angle_diff(a, b):
     return min((a - b) % (2 * np.pi), (b - a) % (2 * np.pi))
 
 def calculate_pseudotime(pol_data, centered_data, save_dir=""):
+    r, theta = pol_data
+    x, y = centered_data.T
     # note that pol_data is coord x cell, centered_data is cell x coord
     # find the index of the point that is closest 3/2 pi
-    pol_data[1] = pol_data[1] - np.min(pol_data[1])
-    lower_ind = np.argmin(np.array([min_angle_diff(x, 3 / 2 * np.pi) for x in pol_data[1]]))
-    # print(pol_data.shape, centered_data.shape)
-    # print(np.min(pol_data[1]), np.max(pol_data[1]))
-    # print(np.max(centered_data[:, 1]), np.min(centered_data[:, 1]), centered_data[:, 1][lower_ind])
+    lower_ind = np.argmin(np.array([min_angle_diff(t, 3 / 2 * np.pi) for t in theta]))
+    # find the index of the cell most depleted in GMNN, this is likely in G1
+    leftmost_ind = np.argmin(x)
 
-    # reindex phi so that the leftmost point is 0 (this is the most GMNN depleted and likely G1)
-    leftmost_ind = np.argmin(centered_data[:, 0])
-    # pol_data[0] = (pol_data[0] - pol_data[0][leftmost_ind]) % (2 * np.pi)
-    # pol_data[0][pol_data[0] < 0] = 2 * np.pi + pol_data[0][pol_data[0] < 0]
+    # reindex theta so that theta for lower_ind is maximal (2pi), and theta is in (0, 2pi]
+    theta -= theta[lower_ind]
+    theta[theta < 0] += 2 * np.pi
+    theta[lower_ind] = 2 * np.pi
 
-    # plt.clf()
-    # plt.scatter(centered_data[:, 0], centered_data[:, 1], c=pol_data[1] / (2 * np.pi), cmap="hsv")
-    # plt.scatter(centered_data[lower_ind, 0], centered_data[lower_ind, 1], marker="*")
-    # plt.scatter(centered_data[leftmost_ind, 0], centered_data[leftmost_ind, 1], marker="*")
-    # plt.savefig("ping.png")
-
-    pol_sort_inds = np.argsort(pol_data[1])
+    # sort by theta
+    pol_sort_inds = np.argsort(theta)
     leftmost_ind = np.where(pol_sort_inds == leftmost_ind)[0][0]
     lower_ind = np.where(pol_sort_inds == lower_ind)[0][0]
-    pol_sort_rho = pol_data[0][pol_sort_inds]
-    pol_sort_phi = pol_data[1][pol_sort_inds]
-    centered_data_sort0 = centered_data[pol_sort_inds, 0]
-    centered_data_sort1 = centered_data[pol_sort_inds, 1]
+    print(leftmost_ind, lower_ind, len(pol_sort_inds))
+    pol_sort_r = pol_data[0][pol_sort_inds]
+    pol_sort_theta = pol_data[1][pol_sort_inds]
+    pol_sort_x = x[pol_sort_inds]
+    pol_sort_y = y[pol_sort_inds]
 
     # Rezero to minimum--reasoning, cells disappear during mitosis, so we should have the fewest detected cells there
     cc_props = FucciCellCycle()
     n_bins = int(cc_props.TOT_LEN / cc_props.M_LEN)
     n_bins_sector = int(n_bins / 8) # looking for something in the lower bottom left octant
-    bins = plt.hist(pol_sort_phi[lower_ind:leftmost_ind], n_bins_sector)
+    # lower_octant_theta = np.concatenate((pol_sort_theta[leftmost_ind:], pol_sort_theta[:lower_ind + 1]))
+    # lower_octant_x, lower_octant_y = np.concatenate((pol_sort_x[leftmost_ind:], pol_sort_x[:lower_ind + 1])), np.concatenate((pol_sort_y[leftmost_ind:], pol_sort_y[:lower_ind + 1]))
+    lower_octant_theta = pol_sort_theta[leftmost_ind:]
+    lower_octant_x, lower_octant_y = pol_sort_x[leftmost_ind:], pol_sort_y[leftmost_ind:]
+    plt.clf()
+    plt.scatter(x, y, alpha=0.5)
+    plt.scatter(lower_octant_x, lower_octant_y, c=(lower_octant_theta - np.min(lower_octant_theta)) / (2 * np.pi), cmap="RdYlGn")
+    plt.savefig("ping.png")
+
+    plt.clf()
+    bin_vals, bin_edges, patches = plt.hist(lower_octant_theta, min(n_bins_sector, len(lower_octant_theta)))
     plt.close()
-    start_phi = bins[1][np.argmin(bins[0])]
+    start_phi = bin_edges[np.argmin(bin_vals)]
+    # start_phi = bin_edges[np.max(np.where(bin_vals == np.min(bin_vals))[0])]
 
     # Move those points to the other side
-    more_than_start = np.greater(pol_sort_phi, start_phi)
-    less_than_start = np.less_equal(pol_sort_phi, start_phi)
+    more_than_start = np.greater(pol_sort_theta, start_phi)
+    less_than_start = np.less_equal(pol_sort_theta, start_phi)
     pol_sort_rho_reorder = np.concatenate(
-        (pol_sort_rho[more_than_start], pol_sort_rho[less_than_start])
+        (pol_sort_r[more_than_start], pol_sort_r[less_than_start])
     )
     pol_sort_inds_reorder = np.concatenate(
         (pol_sort_inds[more_than_start], pol_sort_inds[less_than_start])
     )
     pol_sort_phi_reorder = np.concatenate(
-        (pol_sort_phi[more_than_start], pol_sort_phi[less_than_start] + np.pi * 2)
+        (pol_sort_theta[more_than_start], pol_sort_theta[less_than_start] + np.pi * 2)
     )
     pol_sort_centered_data0 = np.concatenate(
-        (centered_data_sort0[more_than_start], centered_data_sort0[less_than_start])
+        (pol_sort_x[more_than_start], pol_sort_x[less_than_start])
     )
     pol_sort_centered_data1 = np.concatenate(
-        (centered_data_sort1[more_than_start], centered_data_sort1[less_than_start])
+        (pol_sort_y[more_than_start], pol_sort_y[less_than_start])
     )
     pol_sort_shift = pol_sort_phi_reorder + np.abs(np.min(pol_sort_phi_reorder))
 
