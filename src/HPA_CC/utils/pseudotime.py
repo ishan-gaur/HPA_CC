@@ -31,7 +31,7 @@ class FucciCellCycle:
         self.G1_S_PROP = self.G1_S_TRANS / self.TOT_LEN + self.G1_PROP
         self.S_G2_PROP = self.S_G2_LEN / self.TOT_LEN + self.G1_S_PROP
 
-def intensities_to_polar_pseudotime(log_intensities, center=None):
+def intensities_to_pseudotime(log_intensities, center=None):
     # converts FUCCI GMNN and CDT1 intensities from cartesian (x, y) to polar (r, theta) coordinates
     if center is None:
         center_estimate = np.mean(log_intensities, axis=0)
@@ -42,18 +42,44 @@ def intensities_to_polar_pseudotime(log_intensities, center=None):
     theta = np.arctan2(centered_intensities[:, 1], centered_intensities[:, 0])
     polar = np.stack([r, theta], axis=-1)
     fucci_time = calculate_pseudotime(polar.T, centered_intensities)
-    return fucci_time
+    return fucci_time, center
+
+def min_angle_diff(a, b):
+    return min((a - b) % (2 * np.pi), (b - a) % (2 * np.pi))
 
 def calculate_pseudotime(pol_data, centered_data, save_dir=""):
-    # converts the polar coordinates (with no clear 0 time) to a 0->1 pseudotime
+    # note that pol_data is coord x cell, centered_data is cell x coord
+    # find the index of the point that is closest 3/2 pi
+    pol_data[1] = pol_data[1] - np.min(pol_data[1])
+    lower_ind = np.argmin(np.array([min_angle_diff(x, 3 / 2 * np.pi) for x in pol_data[1]]))
+    # print(pol_data.shape, centered_data.shape)
+    # print(np.min(pol_data[1]), np.max(pol_data[1]))
+    # print(np.max(centered_data[:, 1]), np.min(centered_data[:, 1]), centered_data[:, 1][lower_ind])
+
+    # reindex phi so that the leftmost point is 0 (this is the most GMNN depleted and likely G1)
+    leftmost_ind = np.argmin(centered_data[:, 0])
+    # pol_data[0] = (pol_data[0] - pol_data[0][leftmost_ind]) % (2 * np.pi)
+    # pol_data[0][pol_data[0] < 0] = 2 * np.pi + pol_data[0][pol_data[0] < 0]
+
+    # plt.clf()
+    # plt.scatter(centered_data[:, 0], centered_data[:, 1], c=pol_data[1] / (2 * np.pi), cmap="hsv")
+    # plt.scatter(centered_data[lower_ind, 0], centered_data[lower_ind, 1], marker="*")
+    # plt.scatter(centered_data[leftmost_ind, 0], centered_data[leftmost_ind, 1], marker="*")
+    # plt.savefig("ping.png")
+
     pol_sort_inds = np.argsort(pol_data[1])
+    leftmost_ind = np.where(pol_sort_inds == leftmost_ind)[0][0]
+    lower_ind = np.where(pol_sort_inds == lower_ind)[0][0]
     pol_sort_rho = pol_data[0][pol_sort_inds]
     pol_sort_phi = pol_data[1][pol_sort_inds]
     centered_data_sort0 = centered_data[pol_sort_inds, 0]
     centered_data_sort1 = centered_data[pol_sort_inds, 1]
 
-    # Rezero to minimum --resoning, cells disappear during mitosis, so we should have the fewest detected cells there
-    bins = plt.hist(pol_sort_phi, 1000)
+    # Rezero to minimum--reasoning, cells disappear during mitosis, so we should have the fewest detected cells there
+    cc_props = FucciCellCycle()
+    n_bins = int(cc_props.TOT_LEN / cc_props.M_LEN)
+    n_bins_sector = int(n_bins / 8) # looking for something in the lower bottom left octant
+    bins = plt.hist(pol_sort_phi[lower_ind:leftmost_ind], n_bins_sector)
     plt.close()
     start_phi = bins[1][np.argmin(bins[0])]
 
@@ -115,3 +141,13 @@ def histedges_equalA(x, nbin):
     tmp = np.cumsum(dx ** pow)
     tmp = np.pad(tmp, (1, 0), 'constant')
     return np.interp(np.linspace(0, tmp.max(), nbin + 1), tmp, np.sort(x))
+
+def f_2(c, x, y):
+    """Calculate the algebraic distance between the data points and the mean circle centered at c=(xc, yc)"""
+    # print(c)
+    Ri = calc_R(c[0], c[1], x, y)
+    return Ri - Ri.mean()
+
+def calc_R(xc, yc, x, y):
+    """Calculate the distance of each 2D points from the center (xc, yc)"""
+    return np.sqrt((x - xc) ** 2 + (y - yc) ** 2)
