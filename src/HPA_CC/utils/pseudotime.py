@@ -89,6 +89,7 @@ def calculate_pseudotime(pol_data, centered_data, save_dir=""):
     pol_sort_norm_rev[0] = 1.0
     pol_unsort = np.argsort(pol_sort_inds_reorder)
     fucci_time = pol_sort_norm_rev[pol_unsort]
+    raw_time = raw_time[pol_unsort]
     return fucci_time, raw_time
 
 def stretch_time(time_data,nbins=1000):
