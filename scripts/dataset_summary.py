@@ -22,6 +22,7 @@ import seaborn as sns
 
 from config import FUCCI_DS_PATH, HPA_DS_PATH, OUTPUT_DIR
 from HPA_CC.data.dataset import DatasetFS
+from multiprocessing import Pool
 
 fucci_ds = DatasetFS(FUCCI_DS_PATH)
 hpa_ds = DatasetFS(HPA_DS_PATH)
@@ -60,19 +61,19 @@ for dataset_name, dataset in zip(["fucci", "hpa"], [fucci_ds, hpa_ds]):
         if dataset_name == "hpa":
             er_percentiles = []
 
-        for img_dir in tqdm(dataset.image_list, desc="Collecting image intensities"):
+        def get_percentiles_nonzero(img_path):
+            img = np.array(Image.open(img_path))
+            img = img.flatten()
+            img = img[img > 0]
+            return np.percentile(img, percentiles)
+
+        def process_image(img_dir):
             well_dir = img_dir.parent
             if dataset_name == "fucci":
                 microscopes.append(well_dir.name.split('--')[0])
             else:
                 microscopes.append("hpa")
             wells.append(well_dir.name)
-
-            def get_percentiles_nonzero(img_path):
-                img = np.array(Image.open(img_path))
-                img = img.flatten()
-                img = img[img > 0]
-                return np.percentile(img, percentiles)
 
             if dataset_name == "fucci":
                 nuc = get_percentiles_nonzero(img_dir / "nuclei.png")
@@ -91,6 +92,9 @@ for dataset_name, dataset in zip(["fucci", "hpa"], [fucci_ds, hpa_ds]):
                 gmnn_percentiles.append(np.percentile(gmnn, percentiles))
             if dataset_name == "hpa":
                 er_percentiles.append(np.percentile(er, percentiles))
+
+        with Pool(16) as pool:
+            pool.map(process_image, dataset.image_list)
 
         pkl.dump((microscopes, wells), open(OUTPUT_DIR / f"{dataset_name}_microscopes_wells.pkl", "wb"))
 
