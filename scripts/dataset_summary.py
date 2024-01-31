@@ -158,7 +158,7 @@ def load_dataset_wells(dataset_name):
         microscopes, wells = [], []
         for well_dir in dataset.well_list:
             if dataset_name == "fucci":
-                    microscopes.append(well_dir.name.split('--')[0])
+                microscopes.append(well_dir.name.split('--')[0])
             elif dataset_name == "hpa":
                 microscopes.append("hpa")
             wells.append(well_dir.name)
@@ -207,7 +207,10 @@ def well_percentile_averages(wells, microscopes, ref_intensities):
     well_idx = {w: i for i, w in enumerate(set(wells))}
     well_nums = np.array([well_idx[w] for w in wells])
     for w in set(wells):
-        well_averages.append(np.mean(ref_intensities[well_nums == well_idx[w]], axis=0))
+        well_intensities = ref_intensities[well_nums == well_idx[w]]
+        well_mean = np.mean(well_intensities, axis=0)
+        well_averages.append(well_mean)
     wells_types = list(set(wells))
     well_scopes = np.array([well_to_scope(w) for w in wells_types])
+    well_averages = np.array(well_averages)
     return well_averages, well_scopes
