@@ -48,15 +48,15 @@ else:
         log_mean_GMNN = torch.log(mean_intensities[:, 0] + min_nonzero_GMNN)
         log_mean_CDT1 = torch.log(mean_intensities[:, 1] + min_nonzero_CDT1)
         log_mean_fucci_intensities = torch.stack((log_mean_GMNN, log_mean_CDT1), dim=1)
-        fucci_time, raw_time, center = intensities_to_pseudotime(log_mean_fucci_intensities.numpy())
-        return len(sc_images), log_mean_fucci_intensities, fucci_time, raw_time
+        fucci_time, raw_time, well_std_int = intensities_to_pseudotime(log_mean_fucci_intensities.numpy())
+        return len(sc_images), log_mean_fucci_intensities, well_std_int, fucci_time, raw_time
 
     with Pool(16) as pool:
         results = list(tqdm(pool.imap(process_well, fucci_ds.well_list), total=n_wells, desc="Plotting Pseudotime distributions"))
 
-    cells_per_well, well_intensities, well_pseudotimes, well_angles = zip(*results)
-
-    pkl.dump((cells_per_well, well_intensities, well_pseudotimes, well_angles), open(OUTPUT_DIR / "well_intensity_cache.pkl", "wb"))
+    cells_per_well, well_intensities, well_std_int, well_pseudotimes, well_angles = zip(*results)
+    well_angles = well_angles * 2 * np.pi - np.pi
+    pkl.dump((cells_per_well, well_intensities, well_std_int, well_pseudotimes, well_angles), open(OUTPUT_DIR / "well_intensity_cache.pkl", "wb"))
 
 # n_col = 12
 # n_row = math.ceil(n_wells / n_col)
@@ -85,6 +85,16 @@ else:
 #     sns.lineplot(x="pseudotime", y="CDT1", data=well_df, ax=ax, color="red")
 # plt.savefig(OUTPUT_DIR / "average_intensity_pseudotime.png")
 # plt.close()
+
+
+full_time, full_angles, full_std_int = intensities_to_pseudotime(np.concatenate(well_intensities))
+plt.clf()
+plt.hist(full_angles, bins=100)
+plt.xlabel("Angle")
+plt.ylabel("Number of cells")
+plt.title(f"Bulk Pseudotime Angles")
+plt.savefig(OUTPUT_DIR / "bulk_pseudotime_angles.png")
+plt.close()
 
 n_col = 12
 n_row = math.ceil(n_wells / n_col)
@@ -188,3 +198,6 @@ for i, well, cells, intensities, angles, scope_class, sample_class in tqdm(zip(r
     ax.set_title(f"{well.name} n={cells}, error={np.sum(diff_sample_idxs)}")
 plt.savefig(OUTPUT_DIR / "scope_sample_classes.png")
 plt.close()
+
+# Save scope and well sample classes and gmms to file
+pkl.dump((scope_sample_classes, sample_classes, scope_gmms), open(OUTPUT_DIR / "sample_classes_gmms.pkl", "wb"))

@@ -38,11 +38,12 @@ def intensities_to_pseudotime(log_intensities, center=None):
         center_est2 = least_squares(f_2, center_estimate, args=(log_intensities[:, 0], log_intensities[:, 1]))
         center = center_est2.x
     centered_intensities = log_intensities - center
-    r = np.sqrt(np.sum(centered_intensities ** 2, axis=1))
-    theta = np.arctan2(centered_intensities[:, 1], centered_intensities[:, 0])
+    centered_rescaled_intensities = centered_intensities / (center - np.array([0, 0]))
+    r = np.sqrt(np.sum(centered_rescaled_intensities ** 2, axis=1))
+    theta = np.arctan2(centered_rescaled_intensities[:, 1], centered_rescaled_intensities[:, 0])
     polar = np.stack([r, theta], axis=-1)
-    fucci_time, raw_time = calculate_pseudotime(polar.T, centered_intensities)
-    return fucci_time, raw_time, center
+    fucci_time, raw_time = calculate_pseudotime(polar.T, centered_rescaled_intensities)
+    return fucci_time, raw_time, centered_rescaled_intensities
 
 def min_angle_diff(a, b):
     return min((a - b) % (2 * np.pi), (b - a) % (2 * np.pi))
@@ -131,3 +132,4 @@ def f_2(c, x, y):
 def calc_R(xc, yc, x, y):
     """Calculate the distance of each 2D points from the center (xc, yc)"""
     return np.sqrt((x - xc) ** 2 + (y - yc) ** 2)
+
