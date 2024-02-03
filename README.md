@@ -15,6 +15,9 @@ This just produces a summary of the numeber of images per microscope type in the
 ## pseudotime_labels.py
 
 # DevLog
+2/2/24: Can get a matrix of KL-divergences between the wells' 2D intensity distribution GMM fit to find clusters that can be combined for learning a combined GMM--but maybe the barycenter thing scale so it doesn't matter anyways
+Looks like standardized intensity plots GMM'ed in bulk is not good enough.
+
 1/23/24: __TODO__ need to use the dataset class from the HPA-embedding repo and add the percentile stuff there directly so I don't have a custom implementation in the dataset_summary script. Need to run the dataset pipeline on the HPA dataset again. Also need to document its use.
 
 1/21/24: Somehow the well-level differences are gone T_T; looks like it was because I forgot to exclude empty pixels

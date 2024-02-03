@@ -146,13 +146,18 @@ def get_percentiles_nonzero(img_path):
 
 # below are the functions that load the data from the files created above
 
-def load_fucci_wells():
-    return load_dataset_wells("fucci")
+def load_microscopes_wells():
+    fucci_m, fucci_w = load_fucci_microscopes_wells()
+    hpa_m, hpa_w = load_hpa_microscopes_wells()
+    return fucci_m + hpa_m, fucci_w + hpa_w
 
-def load_hpa_wells():
-    return load_dataset_wells("hpa")
+def load_fucci_microscopes_wells():
+    return load_dataset_microscopes_wells("fucci")
 
-def load_dataset_wells(dataset_name):
+def load_hpa_microscopes_wells():
+    return load_dataset_microscopes_wells("hpa")
+
+def load_dataset_microscopes_wells(dataset_name):
     if not Path.exists(OUTPUT_DIR / f"{dataset_name}_microscopes_wells.pkl"):
         dataset = load_dataset_fs(dataset_name)
         microscopes, wells = [], []

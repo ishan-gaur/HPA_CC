@@ -31,27 +31,29 @@ class FucciCellCycle:
         self.G1_S_PROP = self.G1_S_TRANS / self.TOT_LEN + self.G1_PROP
         self.S_G2_PROP = self.S_G2_LEN / self.TOT_LEN + self.G1_S_PROP
 
-def intensities_to_pseudotime(log_intensities, center=None):
+def intensities_to_pseudotime(log_intensities, center=None, rescale=True, auto_start=False):
     # converts FUCCI GMNN and CDT1 intensities from cartesian (x, y) to polar (r, theta) coordinates
     if center is None:
         center_estimate = np.mean(log_intensities, axis=0)
         center_est2 = least_squares(f_2, center_estimate, args=(log_intensities[:, 0], log_intensities[:, 1]))
         center = center_est2.x
     centered_intensities = log_intensities - center
-    centered_rescaled_intensities = centered_intensities / (center - np.array([0, 0]))
+    if rescale:
+        centered_rescaled_intensities = centered_intensities / (np.array([0, 0]) - center)
+    else:
+        centered_rescaled_intensities = centered_intensities
     r = np.sqrt(np.sum(centered_rescaled_intensities ** 2, axis=1))
     theta = np.arctan2(centered_rescaled_intensities[:, 1], centered_rescaled_intensities[:, 0])
     polar = np.stack([r, theta], axis=-1)
-    fucci_time, raw_time = calculate_pseudotime(polar.T, centered_rescaled_intensities)
+    fucci_time, raw_time = calculate_pseudotime(polar.T, centered_rescaled_intensities, auto_start=auto_start)
     return fucci_time, raw_time, centered_rescaled_intensities
 
 def min_angle_diff(a, b):
     return min((a - b) % (2 * np.pi), (b - a) % (2 * np.pi))
 
-def calculate_pseudotime(pol_data, centered_data, save_dir=""):
+def calculate_pseudotime(pol_data, centered_data, save_dir="", auto_start=False):
     r, theta = pol_data
     x, y = centered_data.T
-    start_theta = np.arctan2(np.min(y), -1)
 
     # sort by theta
     pol_sort_inds = np.argsort(theta)
@@ -60,6 +62,12 @@ def calculate_pseudotime(pol_data, centered_data, save_dir=""):
     pol_sort_x = x[pol_sort_inds]
     pol_sort_y = y[pol_sort_inds]
 
+    if not auto_start:
+        start_theta = np.arctan2(np.min(y), -0.5)
+    else:
+        bins = plt.hist(pol_sort_theta, 150)
+        start_theta = bins[1][np.argmin(bins[0])]
+        
     # Move those points to the other side
     more_than_start = np.greater(pol_sort_theta, start_theta)
     less_than_start = np.less_equal(pol_sort_theta, start_theta)
