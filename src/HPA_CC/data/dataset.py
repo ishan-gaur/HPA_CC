@@ -1,14 +1,11 @@
 from pathlib import Path
 import torch    
-from lightning import LightningDataModule
-from torch.utils.data import Dataset, TensorDataset, DataLoader, random_split
+from torch.utils.data import Dataset
 from microfilm.microplot import microshow
 from microfilm.colorify import multichannel_to_rgb
-from HPA_CC.data.pipeline import load_channel_names, load_dir_images, load_index_paths
-from multiprocessing import Pool
+from HPA_CC.data.pipeline import load_channel_names, load_index_paths
 from tqdm import tqdm
 import numpy as np
-from glob import glob
 
 class DatasetFS:
     """Class to index wells and images in a dataset in a reproducible manner for inital poking around.

@@ -1,6 +1,6 @@
 from pathlib import Path
 from config import HPA_DS_PATH
-from HPA_CC.utils.dataset import Dataset
+from HPA_CC.data.dataset import Dataset
 
 def is_well(f):
     tokens = f.name.split("_")

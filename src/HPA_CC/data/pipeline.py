@@ -15,8 +15,15 @@ from scipy import ndimage
 from microfilm.microplot import microshow
 from skimage import measure, segmentation, morphology
 from HPA_CC.utils.img_norm import min_max_normalization, percentile_normalization, image_cells_sharpness
+import HPA_CC.utils.img_norm as img_norm
 
+silent = False
 suppress_warnings = False
+
+def run_silent():
+    global silent
+    silent = True
+    img_norm.silent = True
 
 def has_channel_names(data_dir):
     return os.path.exists(data_dir / "channel_names.txt")
@@ -697,30 +704,30 @@ def normalize_images(image_paths, cell_masks_paths, norm_strategy, norm_min, nor
             paths.append(path)
     return paths
 
-def filter_images_by_sharpness(seg_image_paths, threshold, sharp_suffix, seg_cell_mask_paths=None, seg_nuclei_mask_paths=None):
-    if seg_cell_mask_paths is None:
-        seg_cell_mask_paths = [None] * len(seg_image_paths)
-    if seg_nuclei_mask_paths is None:
-        seg_nuclei_mask_paths = [None] * len(seg_image_paths)
-    num_removed, num_total = 0, 0
-    for images_path, cell_mask_path, nuclei_mask_path in tqdm(zip(seg_image_paths, seg_cell_mask_paths, seg_nuclei_mask_paths), desc="Filtering by sharpness"):
-        images = torch.tensor(np.load(images_path).astype("float32").squeeze())
-        sharpness = sample_sharpness(images)
-        num_images = len(sharpness)
-        images = images[sharpness > threshold]
-        if cell_mask_path is not None:
-            cell_masks = torch.tensor(np.load(cell_mask_path).astype("float32").squeeze())
-            cell_masks = cell_masks[sharpness > threshold]
-            np.save(cell_mask_path, cell_masks.numpy())
-        if nuclei_mask_path is not None:
-            nuclei_masks = torch.tensor(np.load(nuclei_mask_path).astype("float32").squeeze())
-            nuclei_masks = nuclei_masks[sharpness > threshold]
-            np.save(nuclei_mask_path, nuclei_masks.numpy())
-        sharpness = sharpness[sharpness > threshold]
-        num_removed += num_images - len(sharpness)
-        num_total += num_images
-        np.save(images_path, images.numpy())
-    return num_removed, num_total
+# def filter_images_by_sharpness(seg_image_paths, threshold, sharp_suffix, seg_cell_mask_paths=None, seg_nuclei_mask_paths=None):
+#     if seg_cell_mask_paths is None:
+#         seg_cell_mask_paths = [None] * len(seg_image_paths)
+#     if seg_nuclei_mask_paths is None:
+#         seg_nuclei_mask_paths = [None] * len(seg_image_paths)
+#     num_removed, num_total = 0, 0
+#     for images_path, cell_mask_path, nuclei_mask_path in tqdm(zip(seg_image_paths, seg_cell_mask_paths, seg_nuclei_mask_paths), desc="Filtering by sharpness"):
+#         images = torch.tensor(np.load(images_path).astype("float32").squeeze())
+#         sharpness = sample_sharpness(images)
+#         num_images = len(sharpness)
+#         images = images[sharpness > threshold]
+#         if cell_mask_path is not None:
+#             cell_masks = torch.tensor(np.load(cell_mask_path).astype("float32").squeeze())
+#             cell_masks = cell_masks[sharpness > threshold]
+#             np.save(cell_mask_path, cell_masks.numpy())
+#         if nuclei_mask_path is not None:
+#             nuclei_masks = torch.tensor(np.load(nuclei_mask_path).astype("float32").squeeze())
+#             nuclei_masks = nuclei_masks[sharpness > threshold]
+#             np.save(nuclei_mask_path, nuclei_masks.numpy())
+#         sharpness = sharpness[sharpness > threshold]
+#         num_removed += num_images - len(sharpness)
+#         num_total += num_images
+#         np.save(images_path, images.numpy())
+    # return num_removed, num_total
 
 def filter_masks_by_sharpness(image_paths, cell_mask_paths, nuclei_mask_paths, threshold, dapi, tubl, sharp_suffix, save_samples=True, cmaps=None):
     if save_samples and not cmaps:

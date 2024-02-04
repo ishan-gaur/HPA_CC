@@ -9,16 +9,9 @@ This is primarily useful in designing useful training splits for the pseudotime 
 from pathlib import Path
 import pickle as pkl
 from tqdm import tqdm
-from pprint import pprint
 
 import numpy as np
-import pandas as pd
 from PIL import Image
-
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 from config import OUTPUT_DIR, FUCCI_DS_PATH, HPA_DS_PATH
 from HPA_CC.data.dataset import DatasetFS

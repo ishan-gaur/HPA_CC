@@ -1,5 +1,7 @@
-from kornia.filters import sobel
+import torch
 import numpy as np
+from kornia.filters import sobel
+
 silent = False
 
 def min_max_normalization(images, stats=True, non_zero=True):
