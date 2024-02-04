@@ -15,6 +15,8 @@ This just produces a summary of the numeber of images per microscope type in the
 ## pseudotime_labels.py
 
 # DevLog
+2/3/24: Looks like bulk is better than per-scope, esp for tilescan. This is probably due to clustering on the angles instead of the 2D distribution. Regardless, I can train a model to regress the angles and have functions for transforming all this later. Should make a class that handles the standardization of time and houses all the intensities and everything--will probably use the DatasetFS internally. It should also be able to take the intensity data from the Cell-Cycle paper and do OT between the two distributions and calculate the equivalent pseudotime.
+
 2/2/24: Can get a matrix of KL-divergences between the wells' 2D intensity distribution GMM fit to find clusters that can be combined for learning a combined GMM--but maybe the barycenter thing scale so it doesn't matter anyways
 Looks like standardized intensity plots GMM'ed in bulk is not good enough.
 
