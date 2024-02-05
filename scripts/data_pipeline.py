@@ -9,7 +9,6 @@ from tqdm import tqdm
 import HPA_CC.data.pipeline as pipeline
 from HPA_CC.data.pipeline import create_image_paths_file, image_paths_from_folders, create_data_path_index, load_index_paths, load_channel_names, save_channel_names
 from HPA_CC.data.pipeline import segmentator_setup, get_masks, normalize_images, filter_masks_by_sharpness, clean_and_save_masks, crop_images, resize
-# import HPA_CC.data.img_stats as stats
 from HPA_CC.data.img_stats import pixel_range_info, normalization_dry_run, image_by_level_set, sharpness_dry_run
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -17,10 +16,7 @@ import matplotlib.pyplot as plt
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-
-pipeline.suppress_warnings = True
-pipeline.run_silent()
-# stats.silent = True
+from config import OUTPUT_DIR
 
 stats_opt = ['norm', 'pix_range', 'int_img', 'sample', 'sharp', 'name']
 stats_opt_desc = {
@@ -49,19 +45,28 @@ parser.add_argument('--filter_sharpness', action='store_true', help='Filter out 
 parser.add_argument('--normalize', action='store_true', help='Normalize images')
 parser.add_argument('--single_cell', action='store_true', help='Crop and save single cell images')
 parser.add_argument('--rgb', action='store_true', help='Convert images to RGB')
-parser.add_argument('--dino_cls', action='store_true', help='Cache dino cls embeddings')
-parser.add_argument('--dino_cls_ref', action='store_true', help='Cache dino cls embeddings on reference channels only')
+parser.add_argument('--dinov2', action='store_true', help='Cache dinov2 cls embeddings')
+parser.add_argument('--dino_hpa', action='store_true', help='Cache DINO HPA cls embeddings on reference channels only')
+parser.add_argument('--int_dist', action='store_true', help='Concatenate intensity distributions to embeddings')
 parser.add_argument('--fucci_gmm', action='store_true', help='Fit GMM to FUCCI intensities')
 parser.add_argument('--batch_size', type=int, default=10, help='Batch size for dino inference')
 parser.add_argument('--device', type=int, default=7, help='GPU device number')
 parser.add_argument('--rebuild', action='store_true', help='Rebuild specifed steps even if files exist')
 parser.add_argument('--save_samples', action='store_true', help='Save sample outputs for each well')
+parser.add_argument('--silent', action='store_true', help='Run pipeline in silent mode')
 
 args = parser.parse_args()
 
 #===================================================================================================
 # Basic Setup
 #===================================================================================================
+if args.silent:
+    pipeline.suppress_warnings = True
+    pipeline.run_silent()
+    # stats.silent = True
+else:
+    print("Running in verbose mode")
+
 DATA_DIR = Path(args.data_dir)
 if not DATA_DIR.is_absolute():
     DATA_DIR = Path.cwd() / DATA_DIR
@@ -69,7 +74,7 @@ if not DATA_DIR.is_absolute():
 if not DATA_DIR.exists():
     raise ValueError(f"Data directory {DATA_DIR} does not exist")
 
-OUTPUT_DIR = Path(args.output_dir) if args.output_dir is not None else Path.cwd() / "output"
+OUTPUT_DIR = Path(args.output_dir) if args.output_dir is not None else OUTPUT_DIR
 if not OUTPUT_DIR.exists():
     OUTPUT_DIR.mkdir(parents=True)
     print(f"Created output directory {OUTPUT_DIR}")
@@ -86,7 +91,8 @@ device = f"cuda:{args.device}" if torch.cuda.is_available() else "cpu"
 print(f"Using device {device}")
 
 #===================================================================================================
-# Set up paths for data and results
+# Set up paths for data and results--NEEDS TO BE UPDATED for any new functionality added
+#                                    -------------------
 #===================================================================================================
 no_name = (args.name == 'unspecified')
 BASE_INDEX = DATA_DIR / "index.csv"
@@ -132,7 +138,7 @@ if config.channels is None:
 DAPI, TUBL, CALB2 = config.dapi, config.tubl, config.calb2
 
 #===================================================================================================
-# Implementation of Pipeline Steps
+# Image stats are useful for exploring the data and trying out parameters for the pipeline config
 #===================================================================================================
 if args.stats is not None:
     if args.stats == stats_opt[NAME]:
@@ -175,6 +181,21 @@ if args.stats is not None:
         dataset_image_paths, _, _ = load_index_paths(NAME_INDEX)
         dataset_image_paths = dataset_image_paths[:args.calc_num]
         sharpness_dry_run(dataset_image_paths, config.sharpness_threshold, OUTPUT_DIR, dataset_config.cmaps)
+
+#===================================================================================================
+# Execution of Pipeline Steps (most implementation details are in the HPA_CC.data.pipeline module)
+# Each step works by checking if the necessary precursor files exist
+# Then ensures the command line arguments make sense
+# Pipeline commands called here all take in index files, which are the central object of the pipeline
+# The index files keep track of results of each intermediate step in terms of the resulting images
+# and segmentation masks. The files are named according to the series of transformations that have
+# been applied to them.
+# Pipeline steps output lists of these filenames, which can then be combined as desired to create 
+# a new index file.
+# The pipeline outputs "named" index files. These names identify a unique "dataset" that can be 
+# read out from the original files. The names also correspond to a copy of the generating config
+# that is copied to the dataset directory for reproducibility/debugging later on.
+#===================================================================================================
 
 if args.image_mask_cache or args.all:
     print("Caching composite images and getting segmentation masks")
@@ -291,45 +312,54 @@ if args.rgb or args.all:
         rgb_dataset = dataset.as_rgb()
         rgb_dataset.save(RGB_DATASET)
 
-if args.dino_cls or args.dino_cls_ref or args.all:
-    from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
-    from HPA_CC.models.dino import DINO
-    assert not (args.dino_cls and args.dino_cls_ref), "Cannot run both DINO classification and DINO classification with reference at the same time, please run separately."
-    assert not no_name, "Name of dataset must be specified"
-    assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
+# if args.dino_cls or args.dino_cls_ref or args.dino_hpa or args.all:
+#     from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
+#     assert sum([args.dino_cls, args.dino_cls_ref, args.dino_hpa]) < 1, "Cannot run multiple DINO procedures at once"
+#     if args.dino_cls or args.dino_cls_ref:
+#         from HPA_CC.models.dino import DINO
+#     else:
+#         from HPA_CC.models.dino import DINO_HPA as DINO
+#         if not args.dino_hpa:
+#             Warning("DINO procedure not specified, running DINO HPA by default")
+#     assert not no_name, "Name of dataset must be specified"
+#     assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
+    
+#     # both use the reference channels only so modifying the target output file name accordingly
+#     if args.dino_cls_ref or args.dino_hpa:
+#         EMBEDDINGS_DATASET = EMBEDDINGS_DATASET.parent / ("ref_" + EMBEDDINGS_DATASET.name)
+    
+#     if EMBEDDINGS_DATASET.exists() and not args.rebuild:
+#         print("Embeddings file already exists, skipping. Set --rebuild to overwrite.")
+#     elif args.dino_hpa:
+#         assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
 
-    if args.dino_cls_ref:
-        EMBEDDINGS_DATASET = EMBEDDINGS_DATASET.parent / ("ref_" + EMBEDDINGS_DATASET.name)
+#     else:
+#         assert args.dino_cls_ref or SimpleDataset.has_cache_files(RGB_DATASET), "RGB dataset does not exist, run --rgb first"
+#         assert args.dino_cls or NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
+#         print("Running DINO model to get embeddings")
+#         if type(dataset_config.output_image_size) != tuple:
+#             dataset_config.output_image_size = (dataset_config.output_image_size, dataset_config.output_image_size)
+#         dino = DINO(imsize=dataset_config.output_image_size).to(device)
+#         if args.dino_cls:
+#             dataset = SimpleDataset(path=RGB_DATASET)
+#         elif args.dino_cls_ref:
+#             dataset = CellImageDataset(NAME_INDEX, ["pure_blue", "pure_red"], channels=[0, 1])
+#             assert dataset[0].shape[0] == 2, "Dataset should've been only two channels at this point, got shape " + str(dataset[0].shape)
+#             dataset = dataset.as_rgb()
+#             assert dataset[0].shape[0] == 3, "Dataset should've been converted to RGB at this point, got shape " + str(dataset[0].shape)
+#             assert torch.sum(dataset[0:10, 1, :, :] != 0) == 0, "Dataset should've been converted to RGB with green channel zeroed out"
+#         dataloader = DataLoader(dataset, batch_size=args.batch_size, num_workers=1, shuffle=False)
 
-    if EMBEDDINGS_DATASET.exists() and not args.rebuild:
-        print("Embeddings file already exists, skipping. Set --rebuild to overwrite.")
-    else:
-        assert args.dino_cls_ref or SimpleDataset.has_cache_files(RGB_DATASET), "RGB dataset does not exist, run --rgb first"
-        assert args.dino_cls or NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
-        print("Running DINO model to get embeddings")
-        if type(dataset_config.output_image_size) != tuple:
-            dataset_config.output_image_size = (dataset_config.output_image_size, dataset_config.output_image_size)
-        dino = DINO(imsize=dataset_config.output_image_size).to(device)
-        if args.dino_cls:
-            dataset = SimpleDataset(path=RGB_DATASET)
-        elif args.dino_cls_ref:
-            dataset = CellImageDataset(NAME_INDEX, ["pure_blue", "pure_red"], channels=[0, 1])
-            assert dataset[0].shape[0] == 2, "Dataset should've been only two channels at this point, got shape " + str(dataset[0].shape)
-            dataset = dataset.as_rgb()
-            assert dataset[0].shape[0] == 3, "Dataset should've been converted to RGB at this point, got shape " + str(dataset[0].shape)
-            assert torch.sum(dataset[0:10, 1, :, :] != 0) == 0, "Dataset should've been converted to RGB with green channel zeroed out"
-        dataloader = DataLoader(dataset, batch_size=args.batch_size, num_workers=1, shuffle=False)
+#         embeddings = []
+#         with torch.no_grad():
+#             for batch in tqdm(iter(dataloader), desc="Embedding images with DINOv2"):
+#                 batch = batch.to(device)
+#                 batch_embedding = dino(batch).cpu()
+#                 embeddings.append(batch_embedding)
+#         embeddings = torch.cat(embeddings)
 
-        embeddings = []
-        with torch.no_grad():
-            for batch in tqdm(iter(dataloader), desc="Embedding images with DINOv2"):
-                batch = batch.to(device)
-                batch_embedding = dino(batch).cpu()
-                embeddings.append(batch_embedding)
-        embeddings = torch.cat(embeddings)
-
-        torch.save(embeddings, EMBEDDINGS_DATASET)
-        print(embeddings.shape)
+#         torch.save(embeddings, EMBEDDINGS_DATASET)
+#         print(embeddings.shape)
 
 
 if args.fucci_gmm or args.all:

@@ -14,8 +14,8 @@ import cv2
 from scipy import ndimage
 from microfilm.microplot import microshow
 from skimage import measure, segmentation, morphology
-from HPA_CC.utils.img_norm import min_max_normalization, percentile_normalization, image_cells_sharpness
-import HPA_CC.utils.img_norm as img_norm
+from HPA_CC.utils.img_tools import min_max_normalization, percentile_normalization, image_cells_sharpness
+import HPA_CC.utils.img_tools as img_tools
 
 silent = False
 suppress_warnings = False
@@ -23,7 +23,7 @@ suppress_warnings = False
 def run_silent():
     global silent
     silent = True
-    img_norm.silent = True
+    img_tools.silent = True
 
 def has_channel_names(data_dir):
     return os.path.exists(data_dir / "channel_names.txt")
@@ -74,23 +74,32 @@ def image_paths_from_folders(folders_file):
     image_paths = [Path(x.strip()) for x in image_paths]
     return image_paths
 
-def segmentator_setup(multi_channel_model, device):
-    if version.parse(torch.__version__) >= version.parse("1.10.0"):
-        raise ValueError(f"HPA Cell Segmentator is not compatible with torch >= 1.10.0.\nTorch {torch.__version__} detected. Are you using the 'data-prep' conda environment?")
-    if version.parse(np.__version__) >= version.parse("1.20.0"):
-        raise ValueError(f"HPA Cell Segmentator is not compatible with torch >= 1.10.0.\nTorch {torch.__version__} detected. Are you using the 'data-prep' conda environment?")
-    if suppress_warnings:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            return _segmentator_setup(multi_channel_model, device)
-    else:
-        return _segmentator_setup(multi_channel_model, device)
+def segmentator_compatible(func):
+    def wrapper(*args, **kwargs):
+        # if version.parse(torch.__version__) >= version.parse("1.10.0"):
+        #     raise ValueError(f"HPA Cell Segmentator is not compatible with torch >= 1.10.0.\nTorch {torch.__version__} detected. Are you using the 'data-prep' conda environment?")
+        # if version.parse(np.__version__) >= version.parse("1.20.0"):
+        #     raise ValueError(f"HPA Cell Segmentator is not compatible with torch >= 1.10.0.\nTorch {torch.__version__} detected. Are you using the 'data-prep' conda environment?")
+        return func(*args, **kwargs)
+    return wrapper
 
-def _segmentator_setup(multi_channel_model, device):
+def emits_warnings(func):
+    def wrapper(*args, **kwargs):
+        if suppress_warnings:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return func(*args, **kwargs)
+        else:
+            return func(*args, **kwargs)
+    return wrapper
+
+@segmentator_compatible
+@emits_warnings
+def segmentator_setup(multi_channel_model, device):
     import hpacellseg.cellsegmentator as cellsegmentator
     pwd = Path(os.getcwd())
-    NUC_MODEL = pwd / "HPA-Cell-Segmentation" / "nuclei-model.pth"
-    CELL_MODEL = pwd / "HPA-Cell-Segmentation" / "cell-model.pth"
+    NUC_MODEL = pwd / "src" / "HPA-Cell-Segmentation" / "nuclei-model.pth"
+    CELL_MODEL = pwd / "src" / "HPA-Cell-Segmentation" / "cell-model.pth"
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
     segmentator = cellsegmentator.CellSegmentator(
         str(NUC_MODEL), str(CELL_MODEL), device=device, padding=True, multi_channel_model=multi_channel_model
@@ -154,19 +163,9 @@ def composite_images_from_paths(image_paths, channel_names):
     path_images = np.concatenate(path_images)
     return path_images
 
+@segmentator_compatible
+@emits_warnings
 def get_masks(segmentator, image_paths, channel_names, dapi, tubl, calb2, merge_missing=True, rebuild=False, display=False):
-    if version.parse(torch.__version__) >= version.parse("1.10.0"):
-        raise ValueError(f"HPA Cell Segmentator is not compatible with torch >= 1.10.0.\nTorch {torch.__version__} detected. Are you using the 'data-prep' conda environment?")
-    if version.parse(np.__version__) >= version.parse("1.20.0"):
-        raise ValueError(f"HPA Cell Segmentator is not compatible with torch >= 1.10.0.\nTorch {torch.__version__} detected. Are you using the 'data-prep' conda environment?")
-    if suppress_warnings:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            return _get_masks(segmentator, image_paths, channel_names, dapi, tubl, calb2, merge_missing, rebuild, display)
-    else:
-        return _get_masks(segmentator, image_paths, channel_names, dapi, tubl, calb2, merge_missing, rebuild, display)
-
-def _get_masks(segmentator, image_paths, channel_names, dapi, tubl, calb2, merge_missing=True, rebuild=False, display=False):
     """
     Get the masks for the images in image_paths using HPA-Cell-Segmentation
     """

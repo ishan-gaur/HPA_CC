@@ -1,11 +1,11 @@
 import torch
 import numpy as np
-from pipeline import composite_images_from_paths
-from utils import get_dataset_percentiles, get_image_percentiles
-from utils import min_max_normalization, rescale_normalization, threshold_normalization, percentile_normalization
-from utils import sample_sharpness
-from data_viz import plot_intensities, barplot_percentiles, cdf_percentiles, histplot_percentiles
-from data_viz import save_image_grid, color_image_by_intensity, plot_hist_w_threshold
+from HPA_CC.data.pipeline import composite_images_from_paths
+from HPA_CC.utils.img_tools import get_batch_percentiles, get_image_percentiles
+from HPA_CC.utils.img_tools import min_max_normalization, rescale_normalization, threshold_normalization, percentile_normalization
+from HPA_CC.utils.img_tools import sample_sharpness
+from HPA_CC.data.data_viz import plot_intensities, barplot_percentiles, cdf_percentiles, histplot_percentiles
+from HPA_CC.data.data_viz import save_image_grid, color_image_by_intensity, plot_hist_w_threshold
 
 
 def pixel_range_info(args, image_paths, CHANNELS, OUTPUT_DIR):
@@ -14,8 +14,8 @@ def pixel_range_info(args, image_paths, CHANNELS, OUTPUT_DIR):
         image_sample_paths = np.random.choice(image_paths, args.calc_num)
         image_sample = composite_images_from_paths(image_sample_paths, CHANNELS)
 
-        values, percentiles = get_dataset_percentiles(image_sample, non_zero=False)
-        thresholded_values, thresholded_percentiles = get_dataset_percentiles(image_sample)
+        values, percentiles = get_batch_percentiles(image_sample, non_zero=False)
+        thresholded_values, thresholded_percentiles = get_batch_percentiles(image_sample)
 
         barplot_percentiles(percentiles, values, CHANNELS, OUTPUT_DIR / 'pixel_percentiles.png')
         barplot_percentiles(thresholded_percentiles, thresholded_values, CHANNELS, OUTPUT_DIR / 'pixel_percentiles_non_zero.png')

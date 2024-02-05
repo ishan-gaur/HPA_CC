@@ -4,6 +4,11 @@ Includes DINOv2 and ResNet baselines as well.
 Subset of HPA data covered by CC data can be found here: TODO
 FUCCI U2OS data can be found here: TODO (should this be by well or the original data? will need scripts in this repo for the conversion if not)
 
+# Setup
+1. Download datasets from __TODO__, add the locations to scripts/config.py
+2. Create the appropriate conda environment with ```conda env create -f environment.yml```
+3. Install remaining dependencies with pip by running ```./install.sh```. Note that you may have to give the script execution privileges using ```chmod +x install.sh```
+
 # FUCCI Dataset
 IF images of U2-OS FUCCI cells, with four channels: DAPI, $\gamma$-tubulin, Geminin (GMNN), and CDT1. GMNN and CDT1 are cell cycle markers.
 Datasets are organized into two levels: wells and images. The datasets (HPA dataset too) are preprocessed using the preprocessing.py script. This allows users to specify how to remove artifacts from the segmentations, how large to make the crops, what strategies to use for normalization and filtering out of focus samples, etc.

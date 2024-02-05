@@ -49,6 +49,16 @@ def threshold_normalization(images, min_int, max_int, stats=True):
     mins, maxes, intensities = get_min_max_int(images)
     return norm_images, mins, maxes, intensities
 
+def rescale_normalization(images, stats=True):
+    dtype_max = np.iinfo(images.dtype).max
+    if not silent: print("Normalizing images")
+    norm_images = images / dtype_max
+    norm_images = norm_images.astype(np.float32)
+    if not stats:
+        return norm_images
+    mins, maxes, intensities = get_min_max_int(norm_images)
+    return norm_images, mins, maxes, intensities
+
 def get_images_percentiles(images, percentiles=[90, 99, 99.99], non_zero=True):
     # returns a list of percentiles for each batch by channel: C x P
     num_channels = images.shape[1]
@@ -79,3 +89,28 @@ def image_cells_sharpness(image, cell_mask):
     sharpness_levels[0] = None
     assert len(sharpness_levels) == cell_mask.max().astype(int) + 1
     return sharpness_levels
+
+def sample_sharpness(images):
+    from kornia.filters import sobel
+    image_sharpness = sobel(images)
+    image_sharpness = image_sharpness.std(dim=(1,2,3))
+    return image_sharpness
+
+def get_batch_percentiles(images, percentiles=[0, 25, 50, 90, 99, 99.99], non_zero=True):
+    num_channels = images.shape[1]
+    images = images.transpose(1, 0, 2, 3).reshape(num_channels, -1)
+    if not silent: print("Calculating dataset pixel percentiles")
+    if non_zero:
+        images = [channel_pixels[channel_pixels > 0] for channel_pixels in images]
+    values = np.array([np.percentile(channel_pixels, percentiles) for channel_pixels in images])
+    return values, percentiles
+
+def get_image_percentiles(images, percentiles=[90, 99, 99.99], non_zero=True):
+    # returns a list of percentiles for each image by channel: C x B x P
+    num_channels, num_images = images.shape[1], images.shape[0]
+    channel_images = images.transpose(1, 0, 2, 3).reshape(num_channels, num_images, -1)
+    if not silent: print("Calculating image pixel percentiles")
+    if non_zero:
+        channel_images = [[image[image > 0] for image in images] for images in channel_images]
+    values = np.array([[np.percentile(image, percentiles) for image in images] for images in channel_images])
+    return values, percentiles

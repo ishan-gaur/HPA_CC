@@ -1,16 +1,24 @@
-name: hpa-cc
+name: hpa-cc-copy
 channels:
   - conda-forge
+  - pytorch
+  - nvidia
   - defaults
 dependencies:
-  - kornia
-  - lightning
   - python=3.9
   - pytorch-cuda=11.8
   - pytorch==2.1.1
-  - scikit-learn
-  - seaborn
   - torchaudio==2.1.1
   - torchvision==0.16.1
+  - lightning
+  - kornia
+  - scikit-learn
+  - scikit-image
+  - seaborn
   - ipykernel
-prefix: /home/ishang/miniconda3/envs/hpa-cc
+  - numpy
+  - scipy
+  - imageio
+  - pillow
+  - click
+prefix: /home/ishang/miniconda3/envs/hpa-cc-copy
