@@ -201,7 +201,8 @@ class CellSegmentator(object):
             self.target_shape = image.shape
             if len(image.shape) == 2:
                 image = np.dstack((image, image, image))
-            image = transform.rescale(image, self.scale_factor, multichannel=True)
+            # image = transform.rescale(image, self.scale_factor, multichannel=True)
+            image = transform.rescale(image, self.scale_factor, channel_axis=len(image.shape) - 1)
             nuc_image = np.dstack((image[..., 2], image[..., 2], image[..., 2]))
             if self.padding:
                 rows, cols = nuc_image.shape[:2]
@@ -289,7 +290,8 @@ class CellSegmentator(object):
             self.target_shape = image.shape
             if not len(image.shape) == 3:
                 raise ValueError("image should has 3 channels")
-            cell_image = transform.rescale(image, self.scale_factor, multichannel=True)
+            # cell_image = transform.rescale(image, self.scale_factor, multichannel=True)
+            cell_image = transform.rescale(image, self.scale_factor, channel_axis=len(image.shape) - 1)
             if self.padding:
                 rows, cols = cell_image.shape[:2]
                 self.scaled_shape = rows, cols

@@ -17,6 +17,10 @@ from skimage import measure, segmentation, morphology
 from HPA_CC.utils.img_tools import min_max_normalization, percentile_normalization, image_cells_sharpness
 import HPA_CC.utils.img_tools as img_tools
 
+from HPA_CC.data import data_viz
+data_viz.silent = True
+from HPA_CC.data.data_viz import save_image, save_image_grid
+
 silent = False
 suppress_warnings = False
 
@@ -650,10 +654,6 @@ def normalize_images(image_paths, cell_masks_paths, norm_strategy, norm_min, nor
     if save_samples and not cmaps:
         raise ValueError("Need to provide cmaps if saving samples")
 
-    import data_viz
-    data_viz.silent = True
-    from data_viz import save_image, save_image_grid
-
     paths = []
     for i in tqdm(range(0, len(image_paths), batch_size), desc="Normalizing images"):
         batch_paths = image_paths[i:min(i+batch_size, len(image_paths))]
@@ -729,11 +729,10 @@ def normalize_images(image_paths, cell_masks_paths, norm_strategy, norm_min, nor
     # return num_removed, num_total
 
 def filter_masks_by_sharpness(image_paths, cell_mask_paths, nuclei_mask_paths, threshold, dapi, tubl, sharp_suffix, save_samples=True, cmaps=None):
+    if threshold is None:
+        threshold = 0
     if save_samples and not cmaps:
         raise ValueError("Need to provide cmaps if saving samples")
-    import data_viz
-    data_viz.silent = True
-    from data_viz import save_image
     new_cell_paths, new_nuclei_paths = [], []
     num_removed, num_total = 0, 0
     for images_path, cell_mask_path, nuclei_mask_path in tqdm(zip(image_paths, cell_mask_paths, nuclei_mask_paths),

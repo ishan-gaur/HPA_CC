@@ -86,7 +86,7 @@ def image_cells_sharpness(image, cell_mask):
         if len(cell_sharpness) == 0:
             continue
         sharpness_levels[cell] = cell_sharpness.std()
-    sharpness_levels[0] = None
+    sharpness_levels[0] = None # since the 0th "cell" is just the background
     assert len(sharpness_levels) == cell_mask.max().astype(int) + 1
     return sharpness_levels
 

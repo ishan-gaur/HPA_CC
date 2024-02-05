@@ -2,8 +2,8 @@ from tqdm import tqdm
 from pathlib import Path
 import torch
 import numpy as np
-from pipeline import load_index_paths, run_silent
-from data_viz import save_image_grid
+from HPA_CC.data.pipeline import load_index_paths, run_silent
+from HPA_CC.data.data_viz import save_image_grid
 
 run_silent()
 

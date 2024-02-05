@@ -9,7 +9,7 @@ conda run -n $ENV_NAME pip install --upgrade --upgrade-strategy only-if-needed i
 # Installing the HPA-Cell-Segmentation package
 cd src/HPA-Cell-Segmentation
 conda run -n $ENV_NAME pip install 'git+https://github.com/haoxusci/pytorch_zoo@master#egg=pytorch_zoo'
-conda run -n $ENV_NAME pip install . --upgrade --upgrade-strategy only-if-needed
+conda run -n $ENV_NAME pip install -e . --upgrade --upgrade-strategy only-if-needed
 cd ../..
 
 # JAX Tools

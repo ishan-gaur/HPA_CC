@@ -1,3 +1,4 @@
+import shutil
 import sys
 import inspect
 import argparse
@@ -6,16 +7,20 @@ from pathlib import Path
 from importlib import import_module
 from tqdm import tqdm
 
+from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
 import HPA_CC.data.pipeline as pipeline
 from HPA_CC.data.pipeline import create_image_paths_file, image_paths_from_folders, create_data_path_index, load_index_paths, load_channel_names, save_channel_names
 from HPA_CC.data.pipeline import segmentator_setup, get_masks, normalize_images, filter_masks_by_sharpness, clean_and_save_masks, crop_images, resize
+import HPA_CC.data.well_normalization as spline
 from HPA_CC.data.img_stats import pixel_range_info, normalization_dry_run, image_by_level_set, sharpness_dry_run
-import seaborn as sns
-import matplotlib.pyplot as plt
+from HPA_CC.models.dino import run_silent as dino_silent
 
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 from config import OUTPUT_DIR
 
 stats_opt = ['norm', 'pix_range', 'int_img', 'sample', 'sharp', 'name']
@@ -63,7 +68,7 @@ args = parser.parse_args()
 if args.silent:
     pipeline.suppress_warnings = True
     pipeline.run_silent()
-    # stats.silent = True
+    dino_silent()
 else:
     print("Running in verbose mode")
 
@@ -94,15 +99,19 @@ print(f"Using device {device}")
 # Set up paths for data and results--NEEDS TO BE UPDATED for any new functionality added
 #                                    -------------------
 #===================================================================================================
+# just a list of the image and mask files
 no_name = (args.name == 'unspecified')
 BASE_INDEX = DATA_DIR / "index.csv"
 
+# index after the cleaning step--remove small objects and partial cells
 CLEAN_SUFFIX = f"{'no_border_' if config.rm_border else ''}{'rm_' + str(config.remove_size)}"
 CLEAN_INDEX = DATA_DIR / f"index_clean_{CLEAN_SUFFIX}.csv"
 
+# index after the sharpness filtering step--remove blurry images
 SHARP_SUFFIX = f"{config.sharpness_threshold}".split(".")[-1] if config.sharpness_threshold is not None else "none"
 SHARP_INDEX = DATA_DIR / f"{CLEAN_INDEX.stem}_sharp_{SHARP_SUFFIX}.csv"
 
+# index after intensity normalization
 if config.norm_strategy in ['threshold', 'percentile']:
     NORM_SUFFIX = f"{config.norm_strategy}{f'_{config.norm_min}_{config.norm_max}' if config.norm_strategy in ['threshold', 'percentile'] else ''}"
 elif config.norm_strategy == 'spline':
@@ -116,6 +125,7 @@ else:
     NORM_SUFFIX = config.norm_strategy
 NORM_INDEX = DATA_DIR / f"{CLEAN_INDEX.stem if config.sharpness_threshold is None else SHARP_INDEX.stem}_norm_{NORM_SUFFIX}.csv"
 
+# index after cropping single cell images (this is the output imaging dataset)
 NAME_INDEX = DATA_DIR / f"index_{args.name}.csv"
 CONFIG_FILE = DATA_DIR / f"{args.name}.py"
 
@@ -127,10 +137,16 @@ except ModuleNotFoundError:
         print(f"Config file {CONFIG_FILE} not found, but index file {NAME_INDEX} exists, this should not be the case")
     dataset_config = None
 
+# indices for the actual ML datasets
 RGB_DATASET = DATA_DIR / f"rgb_{args.name}.pt"
-EMBEDDINGS_DATASET = DATA_DIR / f"embeddings_{args.name}.pt"
-GMM_PATH = DATA_DIR / f"gmm_{args.name}.pkl"
-GMM_PROBS = DATA_DIR / f"gmm_probs_{args.name}.pt"
+EMBEDDING_TYPE = "dinov2" if args.dinov2 else "dino_hpa" if args.dino_hpa else None
+if EMBEDDING_TYPE is None:
+    EMBEDDINGS_DATASET = None
+else:
+    EMBEDDINGS_DATASET = DATA_DIR / f"embeddings_{args.name}_{EMBEDDING_TYPE}{'_int' if args.int_dist else ''}.pt"
+
+# GMM_PATH = DATA_DIR / f"gmm_{args.name}.pkl"
+# GMM_PROBS = DATA_DIR / f"gmm_probs_{args.name}.pt"
 
 CHANNELS = load_channel_names(DATA_DIR) if config.channels is None else config.channels
 if config.channels is None:
@@ -227,16 +243,18 @@ if args.clean_masks or args.all:
 
 if args.filter_sharpness or args.all:
     assert CLEAN_INDEX.exists(), "Index file does not exist, run --clean_masks first"
-    clean_image_paths, clean_cell_mask_paths, clean_nuclei_mask_paths = load_index_paths(CLEAN_INDEX)
-    # we just overwrite the segmentation masks with the filtered ones so no need to get new paths
-    sharp_cell_mask_paths, sharp_nuclei_mask_paths, num_removed, num_total = filter_masks_by_sharpness(clean_image_paths, 
-        clean_cell_mask_paths, clean_nuclei_mask_paths, config.sharpness_threshold, config.dapi, config.tubl, SHARP_SUFFIX,
-        args.save_samples, config.cmaps)
-    create_data_path_index(clean_image_paths, sharp_cell_mask_paths, sharp_nuclei_mask_paths, SHARP_INDEX, overwrite=True)
-    print("Fraction blurry that were removed:", num_removed / num_total)
+    if SHARP_INDEX.exists() and not args.rebuild:
+        print("Index file already exists, skipping. Set --rebuild to overwrite.")
+    else:
+        clean_image_paths, clean_cell_mask_paths, clean_nuclei_mask_paths = load_index_paths(CLEAN_INDEX)
+        # we just overwrite the segmentation masks with the filtered ones so no need to get new paths
+        sharp_cell_mask_paths, sharp_nuclei_mask_paths, num_removed, num_total = filter_masks_by_sharpness(clean_image_paths, 
+            clean_cell_mask_paths, clean_nuclei_mask_paths, config.sharpness_threshold, config.dapi, config.tubl, SHARP_SUFFIX,
+            args.save_samples, config.cmaps)
+        create_data_path_index(clean_image_paths, sharp_cell_mask_paths, sharp_nuclei_mask_paths, SHARP_INDEX, overwrite=True)
+        print("Fraction blurry that were removed:", num_removed / num_total)
 
 if args.normalize or args.all:
-    import HPA_CC.data.well_normalization as spline
     print("Normalizing images")
     if NORM_INDEX.exists() and not args.rebuild:
         print("Index file already exists, skipping. Set --rebuild to overwrite.")
@@ -249,9 +267,10 @@ if args.normalize or args.all:
             print("Using cleaned images")
             SRC_INDEX = CLEAN_INDEX
         assert SRC_INDEX.exists(), "Index file does not exist, run --filter_sharpness (and optionally --clean_masks) first"
-        assert config.norm_strategy is not None, "Normalization strategy not set in config"
 
-        if config.norm_strategy == 'spline':
+        if config.norm_strategy is None:
+            shutil.copy(SRC_INDEX, NORM_INDEX)
+        elif config.norm_strategy == 'spline':
             if SRC_INDEX != spline.PRECALC_INDEX_PATH:
                 raise NotImplementedError("Spline normalization requires precalculated well percentiles, run well_percentiles.ipynb and well_normalization.py first with your desired input data.")
             image_paths, cell_mask_paths, nuclei_mask_paths = load_index_paths(spline.PRECALC_INDEX_PATH)
@@ -283,7 +302,6 @@ if args.single_cell or args.all:
         print("Index file already exists, skipping. Set --rebuild to overwrite.")
     else:
         assert NORM_INDEX.exists(), "Index file for normalized images does not exist, run --normalize first"
-        print(NORM_INDEX)
         image_paths, cell_mask_paths, nuclei_mask_paths = load_index_paths(NORM_INDEX)
         seg_image_paths, clean_cell_mask_paths, clean_nuclei_mask_paths = crop_images(image_paths, cell_mask_paths, nuclei_mask_paths, config.cutoff, config.nuc_margin)
         final_image_paths, final_cell_mask_paths, final_nuclei_mask_paths = resize(seg_image_paths, clean_cell_mask_paths, clean_nuclei_mask_paths, config.output_image_size, args.name)
@@ -299,7 +317,6 @@ if args.single_cell or args.all:
         dataset_config = config
 
 if args.rgb or args.all:
-    from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
     assert not no_name, "Name of dataset must be specified"
     assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
     if SimpleDataset.has_cache_files(RGB_DATASET) and not args.rebuild:
@@ -311,6 +328,52 @@ if args.rgb or args.all:
         dataset = CellImageDataset(NAME_INDEX, dataset_config.cmaps, batch_size=args.batch_size)
         rgb_dataset = dataset.as_rgb()
         rgb_dataset.save(RGB_DATASET)
+
+if args.int_dist or args.all:
+    assert not no_name, "Name of dataset must be specified"
+    assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
+    if EMBEDDINGS_DATASET.exists() and not args.rebuild:
+        print("Embeddings file already exists, skipping. Set --rebuild to overwrite.")
+    else:
+        assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
+        print("Concatenating intensity distributions to embeddings")
+        dataset = CellImageDataset(NAME_INDEX, dataset_config.cmaps, channels=CHANNELS, batch_size=args.batch_size)
+        embeddings = dataset.get_int_dist_embeddings()
+        torch.save(embeddings, EMBEDDINGS_DATASET)
+        print(embeddings.shape)
+
+if args.dinov2:
+    from HPA_CC.models.dino import DINO
+    assert not no_name, "Name of dataset must be specified"
+    # do I really need the next line at this point?
+    assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
+    
+    if EMBEDDINGS_DATASET.exists() and not args.rebuild:
+        print("Embeddings file already exists, skipping. Set --rebuild to overwrite.")
+    else:
+        assert NAME_INDEX.exists(), "Index file for single cell image dataset does not exist, run --single_cell first"
+        print("Running DINO model to get embeddings")
+        if type(dataset_config.output_image_size) != tuple:
+            dataset_config.output_image_size = (dataset_config.output_image_size, dataset_config.output_image_size)
+        dino = DINO(imsize=dataset_config.output_image_size).to(device)
+        channels = ["blue", "red", None]
+        dataset = CellImageDataset(NAME_INDEX, channels=channels, batch_size=args.batch_size)
+        dataloader = DataLoader(dataset, batch_size=args.batch_size, num_workers=1, shuffle=False)
+        embeddings = []
+        with torch.no_grad():
+            for batch in tqdm(iter(dataloader), desc="Embedding images with DINOv2"):
+                batch = batch.to(device)
+                batch_embedding = dino(batch).cpu()
+                embeddings.append(batch_embedding)
+        embeddings = torch.cat(embeddings)
+        torch.save(embeddings, EMBEDDINGS_DATASET)
+        print(f"Saved embeddings with shape {embeddings.shape} at {EMBEDDINGS_DATASET}")
+elif args.dino_hpa or args.all:
+    from HPA_CC.models.dino import DINO_HPA
+    assert not no_name, "Name of dataset must be specified"
+    # do I really need the next line at this point?
+    assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
+    
 
 # if args.dino_cls or args.dino_cls_ref or args.dino_hpa or args.all:
 #     from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
@@ -362,40 +425,40 @@ if args.rgb or args.all:
 #         print(embeddings.shape)
 
 
-if args.fucci_gmm or args.all:
-    from sklearn.mixture import GaussianMixture
-    from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
-    assert not no_name, "Name of dataset must be specified"
-    assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
-    if GMM_PROBS.exists() and not args.rebuild:
-        print("GMM probabilities file already exists, skipping. Set --rebuild to overwrite.")
-    else:
-        dataset = CellImageDataset(NAME_INDEX)
-        dataloader = DataLoader(dataset, batch_size=1000, num_workers=1, shuffle=False)
-        FUCCI_intensities = []
-        for batch in tqdm(iter(dataloader), desc="Getting FUCCI intensities"):
-            FUCCI_intensities.append(torch.mean(batch[:, 2:], dim=(2, 3)))
-        FUCCI_intensities = torch.cat(FUCCI_intensities)
-        FUCCI_intensities = torch.log10(FUCCI_intensities + 1e-6)
-        plt.clf()
-        sns.kdeplot(x=FUCCI_intensities[:, 0], y=FUCCI_intensities[:, 1])
-        plt.savefig(DATA_DIR / f"fucci_plot_{args.name}.png")
-        plt.clf()
+# if args.fucci_gmm or args.all:
+#     from sklearn.mixture import GaussianMixture
+#     from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
+#     assert not no_name, "Name of dataset must be specified"
+#     assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
+#     if GMM_PROBS.exists() and not args.rebuild:
+#         print("GMM probabilities file already exists, skipping. Set --rebuild to overwrite.")
+#     else:
+#         dataset = CellImageDataset(NAME_INDEX)
+#         dataloader = DataLoader(dataset, batch_size=1000, num_workers=1, shuffle=False)
+#         FUCCI_intensities = []
+#         for batch in tqdm(iter(dataloader), desc="Getting FUCCI intensities"):
+#             FUCCI_intensities.append(torch.mean(batch[:, 2:], dim=(2, 3)))
+#         FUCCI_intensities = torch.cat(FUCCI_intensities)
+#         FUCCI_intensities = torch.log10(FUCCI_intensities + 1e-6)
+#         plt.clf()
+#         sns.kdeplot(x=FUCCI_intensities[:, 0], y=FUCCI_intensities[:, 1])
+#         plt.savefig(DATA_DIR / f"fucci_plot_{args.name}.png")
+#         plt.clf()
 
-        print("Creating GMM")
-        gmm = GaussianMixture(n_components=3)
-        gmm.fit(FUCCI_intensities)
-        pickle.dump(gmm, open(GMM_PATH, "wb"))
-        print("Saved GMM to pickle file at " + str(GMM_PATH))
+#         print("Creating GMM")
+#         gmm = GaussianMixture(n_components=3)
+#         gmm.fit(FUCCI_intensities)
+#         pickle.dump(gmm, open(GMM_PATH, "wb"))
+#         print("Saved GMM to pickle file at " + str(GMM_PATH))
 
-        print("Creating GMM probabilities")
-        probs = gmm.predict_proba(FUCCI_intensities)
-        probs = torch.tensor(probs)
-        torch.save(probs, GMM_PROBS)
-        print("Saved GMM probabilities to torch .pt file at " + str(GMM_PROBS))
-        GMM_PLOT = OUTPUT_DIR / f"gmm_plot_{args.name}.png"
-        plt.clf()
-        sns.kdeplot(x=FUCCI_intensities[:, 0], y=FUCCI_intensities[:, 1], hue=probs.argmax(dim=1), palette="Set2")
-        plt.savefig(GMM_PLOT)
-        plt.clf()
-        print("Saved GMM plot to " + str(GMM_PLOT))
+#         print("Creating GMM probabilities")
+#         probs = gmm.predict_proba(FUCCI_intensities)
+#         probs = torch.tensor(probs)
+#         torch.save(probs, GMM_PROBS)
+#         print("Saved GMM probabilities to torch .pt file at " + str(GMM_PROBS))
+#         GMM_PLOT = OUTPUT_DIR / f"gmm_plot_{args.name}.png"
+#         plt.clf()
+#         sns.kdeplot(x=FUCCI_intensities[:, 0], y=FUCCI_intensities[:, 1], hue=probs.argmax(dim=1), palette="Set2")
+#         plt.savefig(GMM_PLOT)
+#         plt.clf()
+#         print("Saved GMM plot to " + str(GMM_PLOT))

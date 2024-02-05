@@ -56,7 +56,8 @@ def label_nuclei(nuclei_pred):
 
     img_copy[m <= LOW_THRESHOLD] = 0
     img_copy[m > LOW_THRESHOLD] = 1
-    img_copy = img_copy.astype(np.bool)
+    # img_copy = img_copy.astype(np.bool)
+    img_copy = img_copy.astype(bool)
     img_copy = binary_erosion(img_copy)
     # TODO: Add parameter for remove small object size for
     #       differently scaled images.
@@ -67,7 +68,8 @@ def label_nuclei(nuclei_pred):
     mask_img = np.copy(nuclei_pred[..., 2])
     mask_img[mask_img <= HIGH_THRESHOLD] = 0
     mask_img[mask_img > HIGH_THRESHOLD] = 1
-    mask_img = mask_img.astype(np.bool)
+    # mask_img = mask_img.astype(np.bool)
+    mask_img = mask_img.astype(bool)
     mask_img = remove_small_holes(mask_img, 1000)
     # TODO: Figure out good value for remove small objects.
     # mask_img = remove_small_objects(mask_img, 8)
@@ -114,14 +116,16 @@ def label_cell(nuclei_pred, cell_pred):
         m = seeds * border_img  # * dt
         img_copy[m <= threshold + threshold_adjustment] = 0
         img_copy[m > threshold + threshold_adjustment] = 1
-        img_copy = img_copy.astype(np.bool)
+        # img_copy = img_copy.astype(np.bool)
+        img_copy = img_copy.astype(bool)
         img_copy = remove_small_objects(img_copy, small_object_size_cutoff).astype(
             np.uint8
         )
 
         mask_img[mask_img <= threshold] = 0
         mask_img[mask_img > threshold] = 1
-        mask_img = mask_img.astype(np.bool)
+        # mask_img = mask_img.astype(np.bool)
+        mask_img = mask_img.astype(bool)
         mask_img = remove_small_holes(mask_img, 1000)
         mask_img = remove_small_objects(mask_img, 8).astype(np.uint8)
         markers = ndi.label(img_copy, output=np.uint32)[0]
