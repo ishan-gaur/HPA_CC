@@ -34,7 +34,6 @@ class CellImageDataset(Dataset):
     # images are C x H x W
     def __init__(self, index_file, channel_colors=None, channels=None, batch_size=500):
         self.data_dir = Path(index_file).parent
-        self.channel_names = load_channel_names(self.data_dir)
         image_paths, _, _ = load_index_paths(index_file)
         for i in tqdm(range(0, len(image_paths), batch_size), desc="Loading dataset images"):
             image_tensors = []
@@ -50,8 +49,10 @@ class CellImageDataset(Dataset):
 
         if not silent: print(f"Loaded {len(self.images)} images from {len(image_paths)} files.")
         
-        self.channels = [self.channel_names.index(c) if not c is None else None for c in channels] if channels is not None else list(range(len(channels)))
+        self.channels = channels if channels is not None else list(range(len(channels)))
         self.channel_colors = channel_colors if channel_colors is not None else None
+        self.channel_names = load_channel_names(self.data_dir)
+        self.channel_names = [self.channel_names[c] if c is not None else "Padding" for c in self.channels]
         assert self.channel_colors is None or (len(self.channels) == len(self.channel_colors)), "Number of channel colors and channels must be equal"
 
         images_select_shape = list(self.images.shape)

@@ -145,6 +145,8 @@ if EMBEDDING_TYPE is None:
 else:
     EMBEDDINGS_DATASET = DATA_DIR / f"embeddings_{args.name}_{EMBEDDING_TYPE}{'_int' if args.int_dist else ''}.pt"
 
+DINO_CONFIG = Path.cwd() / "configs" / "dino_config.yaml"
+
 # GMM_PATH = DATA_DIR / f"gmm_{args.name}.pkl"
 # GMM_PROBS = DATA_DIR / f"gmm_probs_{args.name}.pt"
 
@@ -347,7 +349,7 @@ if args.dinov2:
     assert not no_name, "Name of dataset must be specified"
     # do I really need the next line at this point?
     assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
-    
+
     if EMBEDDINGS_DATASET.exists() and not args.rebuild:
         print("Embeddings file already exists, skipping. Set --rebuild to overwrite.")
     else:
@@ -356,7 +358,7 @@ if args.dinov2:
         if type(dataset_config.output_image_size) != tuple:
             dataset_config.output_image_size = (dataset_config.output_image_size, dataset_config.output_image_size)
         dino = DINO(imsize=dataset_config.output_image_size).to(device)
-        channels = ["blue", "red", None]
+        channels = [dataset_config.dapi, dataset_config.tubl, None]
         dataset = CellImageDataset(NAME_INDEX, channels=channels, batch_size=args.batch_size)
         dataloader = DataLoader(dataset, batch_size=args.batch_size, num_workers=1, shuffle=False)
         embeddings = []
@@ -373,7 +375,31 @@ elif args.dino_hpa or args.all:
     assert not no_name, "Name of dataset must be specified"
     # do I really need the next line at this point?
     assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
-    
+
+    if device != "cuda:0":
+        print("Warning: DINO HPA model uses DataParallel, which requires the module to be on cuda:0, moving to cuda:0")
+        device = "cuda:0"
+
+    if EMBEDDINGS_DATASET.exists() and not args.rebuild:
+        print("Embeddings file already exists, skipping. Set --rebuild to overwrite.")
+    else:
+        assert NAME_INDEX.exists(), "Index file for single cell image dataset does not exist, run --single_cell first"
+        print("Running DINO model to get embeddings")
+        if type(dataset_config.output_image_size) != tuple:
+            dataset_config.output_image_size = (dataset_config.output_image_size, dataset_config.output_image_size)
+        dino = DINO_HPA(DINO_CONFIG, device=device)
+        channels = [dataset_config.dapi, dataset_config.tubl]
+        dataset = CellImageDataset(NAME_INDEX, channels=channels, batch_size=args.batch_size)
+        dataloader = DataLoader(dataset, batch_size=args.batch_size, num_workers=1, shuffle=False)
+        embeddings = []
+        with torch.no_grad():
+            for batch in tqdm(iter(dataloader), desc="Embedding images with HPA DINO"):
+                batch = batch.to(device)
+                batch_embedding = dino.predict_cls_ref_concat(batch).cpu()
+                embeddings.append(batch_embedding)
+        embeddings = torch.cat(embeddings)
+        torch.save(embeddings, EMBEDDINGS_DATASET)
+        print(f"Saved embeddings with shape {embeddings.shape} at {EMBEDDINGS_DATASET}")
 
 # if args.dino_cls or args.dino_cls_ref or args.dino_hpa or args.all:
 #     from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
