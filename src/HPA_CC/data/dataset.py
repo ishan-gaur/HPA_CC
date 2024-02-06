@@ -34,11 +34,14 @@ class CellImageDataset(Dataset):
     # images are C x H x W
     def __init__(self, index_file, channel_colors=None, channels=None, batch_size=500):
         self.data_dir = Path(index_file).parent
+        self.dataset_fs = DatasetFS(self.data_dir)
         image_paths, _, _ = load_index_paths(index_file)
+        self.n_cells = []
         for i in tqdm(range(0, len(image_paths), batch_size), desc="Loading dataset images"):
             image_tensors = []
             for image_path in image_paths[i:i+batch_size]:
                 image_tensors.append(torch.load(Path(image_path)))
+                self.n_cells.append(image_tensors[-1].shape[0])
             image_tensors = torch.concat(image_tensors)
             if i == 0:
                 self.images = image_tensors
@@ -70,6 +73,23 @@ class CellImageDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.images[idx]
+
+    def __iter__(self):
+        self.batch_index = 0
+        return self
+
+    def __next__(self):
+        if self.batch_index >= len(self.n_cells):
+            raise StopIteration
+        batch_size = self.n_cells[self.batch_index]
+        start_index = sum(self.n_cells[:self.batch_index])
+        end_index = start_index + batch_size
+        batch = self.images[start_index:end_index]
+        self.batch_index += 1
+        return batch
+
+    def iter_len(self):
+        return len(self.n_cells)
 
     def get_channel_names(self):
         return self.channel_names

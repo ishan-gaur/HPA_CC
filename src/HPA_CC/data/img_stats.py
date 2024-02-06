@@ -9,20 +9,20 @@ from HPA_CC.data.data_viz import save_image_grid, color_image_by_intensity, plot
 
 
 def pixel_range_info(args, image_paths, CHANNELS, OUTPUT_DIR):
-        # if args.calc_num < 500:
-        #     print("Warning: using less than 500 images to calculate pixel range may result in inaccurate pixel range")
-        image_sample_paths = np.random.choice(image_paths, args.calc_num)
-        image_sample = composite_images_from_paths(image_sample_paths, CHANNELS)
+    # if args.calc_num < 500:
+    #     print("Warning: using less than 500 images to calculate pixel range may result in inaccurate pixel range")
+    image_sample_paths = np.random.choice(image_paths, args.calc_num)
+    image_sample = composite_images_from_paths(image_sample_paths, CHANNELS)
 
-        values, percentiles = get_batch_percentiles(image_sample, non_zero=False)
-        thresholded_values, thresholded_percentiles = get_batch_percentiles(image_sample)
+    values, percentiles = get_batch_percentiles(image_sample, non_zero=False)
+    thresholded_values, thresholded_percentiles = get_batch_percentiles(image_sample)
 
-        barplot_percentiles(percentiles, values, CHANNELS, OUTPUT_DIR / 'pixel_percentiles.png')
-        barplot_percentiles(thresholded_percentiles, thresholded_values, CHANNELS, OUTPUT_DIR / 'pixel_percentiles_non_zero.png')
+    barplot_percentiles(percentiles, values, CHANNELS, OUTPUT_DIR / 'pixel_percentiles.png')
+    barplot_percentiles(thresholded_percentiles, thresholded_values, CHANNELS, OUTPUT_DIR / 'pixel_percentiles_non_zero.png')
 
-        image_values, image_percentiles = get_image_percentiles(image_sample)
-        # histplot_percentiles(image_percentiles, image_values, CHANNELS, OUTPUT_DIR / 'image_percentiles.png')
-        cdf_percentiles(image_percentiles, image_values, CHANNELS, OUTPUT_DIR / 'image_percentiles_cdf.png')
+    image_values, image_percentiles = get_image_percentiles(image_sample)
+    # histplot_percentiles(image_percentiles, image_values, CHANNELS, OUTPUT_DIR / 'image_percentiles.png')
+    cdf_percentiles(image_percentiles, image_values, CHANNELS, OUTPUT_DIR / 'image_percentiles_cdf.png')
         
 def normalization_dry_run(args, config, image_paths, CHANNELS, OUTPUT_DIR, device, channel_slice=None):
     image_sample_paths = np.random.choice(image_paths, args.calc_num)

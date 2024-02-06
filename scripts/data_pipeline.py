@@ -12,7 +12,9 @@ import HPA_CC.data.pipeline as pipeline
 from HPA_CC.data.pipeline import create_image_paths_file, image_paths_from_folders, create_data_path_index, load_index_paths, load_channel_names, save_channel_names
 from HPA_CC.data.pipeline import segmentator_setup, get_masks, normalize_images, filter_masks_by_sharpness, clean_and_save_masks, crop_images, resize
 import HPA_CC.data.well_normalization as spline
+from HPA_CC.data.well_normalization import buckets
 from HPA_CC.data.img_stats import pixel_range_info, normalization_dry_run, image_by_level_set, sharpness_dry_run
+from HPA_CC.utils.img_tools import get_batch_percentiles
 from HPA_CC.models.dino import run_silent as dino_silent
 
 import torch
@@ -143,7 +145,9 @@ EMBEDDING_TYPE = "dinov2" if args.dinov2 else "dino_hpa" if args.dino_hpa else N
 if EMBEDDING_TYPE is None:
     EMBEDDINGS_DATASET = None
 else:
-    EMBEDDINGS_DATASET = DATA_DIR / f"embeddings_{args.name}_{EMBEDDING_TYPE}{'_int' if args.int_dist else ''}.pt"
+    EMBEDDINGS_DATASET = DATA_DIR / f"embeddings_{args.name}_{EMBEDDING_TYPE}.pt"
+
+INT_DATASET = DATA_DIR / f"intensity_distributions_{args.name}.pt"
 
 DINO_CONFIG = Path.cwd() / "configs" / "dino_config.yaml"
 
@@ -332,17 +336,24 @@ if args.rgb or args.all:
         rgb_dataset.save(RGB_DATASET)
 
 if args.int_dist or args.all:
-    assert not no_name, "Name of dataset must be specified"
-    assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
-    if EMBEDDINGS_DATASET.exists() and not args.rebuild:
-        print("Embeddings file already exists, skipping. Set --rebuild to overwrite.")
+    if INT_DATASET.exists() and not args.rebuild:
+        print("Intensity distributions file already exists, skipping. Set --rebuild to overwrite.")
     else:
+        assert not no_name, "Name of dataset must be specified"
+        assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
         assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
         print("Concatenating intensity distributions to embeddings")
-        dataset = CellImageDataset(NAME_INDEX, dataset_config.cmaps, channels=CHANNELS, batch_size=args.batch_size)
-        embeddings = dataset.get_int_dist_embeddings()
-        torch.save(embeddings, EMBEDDINGS_DATASET)
-        print(embeddings.shape)
+        channels = [dataset_config.dapi, dataset_config.tubl]
+        dataset = CellImageDataset(NAME_INDEX, channels=channels, batch_size=args.batch_size)
+        well_iterator = iter(dataset)
+        percentiles = np.linspace(0, 100, buckets)
+        well_percentiles = []
+        for well_images in tqdm(well_iterator, total=dataset.iter_len(), desc="Getting intensity distributions"):
+            well_int_levels, _ = get_batch_percentiles(well_images.cpu().numpy(), percentiles)
+            well_percentiles.append(np.array([well_int_levels for _ in range(len(well_images))]))
+        well_percentiles = np.concatenate(well_percentiles)
+        torch.save(well_percentiles, INT_DATASET)
+        print(well_percentiles.shape)
 
 if args.dinov2:
     from HPA_CC.models.dino import DINO
@@ -370,6 +381,7 @@ if args.dinov2:
         embeddings = torch.cat(embeddings)
         torch.save(embeddings, EMBEDDINGS_DATASET)
         print(f"Saved embeddings with shape {embeddings.shape} at {EMBEDDINGS_DATASET}")
+
 elif args.dino_hpa or args.all:
     from HPA_CC.models.dino import DINO_HPA
     assert not no_name, "Name of dataset must be specified"
@@ -400,56 +412,6 @@ elif args.dino_hpa or args.all:
         embeddings = torch.cat(embeddings)
         torch.save(embeddings, EMBEDDINGS_DATASET)
         print(f"Saved embeddings with shape {embeddings.shape} at {EMBEDDINGS_DATASET}")
-
-# if args.dino_cls or args.dino_cls_ref or args.dino_hpa or args.all:
-#     from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
-#     assert sum([args.dino_cls, args.dino_cls_ref, args.dino_hpa]) < 1, "Cannot run multiple DINO procedures at once"
-#     if args.dino_cls or args.dino_cls_ref:
-#         from HPA_CC.models.dino import DINO
-#     else:
-#         from HPA_CC.models.dino import DINO_HPA as DINO
-#         if not args.dino_hpa:
-#             Warning("DINO procedure not specified, running DINO HPA by default")
-#     assert not no_name, "Name of dataset must be specified"
-#     assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
-    
-#     # both use the reference channels only so modifying the target output file name accordingly
-#     if args.dino_cls_ref or args.dino_hpa:
-#         EMBEDDINGS_DATASET = EMBEDDINGS_DATASET.parent / ("ref_" + EMBEDDINGS_DATASET.name)
-    
-#     if EMBEDDINGS_DATASET.exists() and not args.rebuild:
-#         print("Embeddings file already exists, skipping. Set --rebuild to overwrite.")
-#     elif args.dino_hpa:
-#         assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
-
-#     else:
-#         assert args.dino_cls_ref or SimpleDataset.has_cache_files(RGB_DATASET), "RGB dataset does not exist, run --rgb first"
-#         assert args.dino_cls or NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
-#         print("Running DINO model to get embeddings")
-#         if type(dataset_config.output_image_size) != tuple:
-#             dataset_config.output_image_size = (dataset_config.output_image_size, dataset_config.output_image_size)
-#         dino = DINO(imsize=dataset_config.output_image_size).to(device)
-#         if args.dino_cls:
-#             dataset = SimpleDataset(path=RGB_DATASET)
-#         elif args.dino_cls_ref:
-#             dataset = CellImageDataset(NAME_INDEX, ["pure_blue", "pure_red"], channels=[0, 1])
-#             assert dataset[0].shape[0] == 2, "Dataset should've been only two channels at this point, got shape " + str(dataset[0].shape)
-#             dataset = dataset.as_rgb()
-#             assert dataset[0].shape[0] == 3, "Dataset should've been converted to RGB at this point, got shape " + str(dataset[0].shape)
-#             assert torch.sum(dataset[0:10, 1, :, :] != 0) == 0, "Dataset should've been converted to RGB with green channel zeroed out"
-#         dataloader = DataLoader(dataset, batch_size=args.batch_size, num_workers=1, shuffle=False)
-
-#         embeddings = []
-#         with torch.no_grad():
-#             for batch in tqdm(iter(dataloader), desc="Embedding images with DINOv2"):
-#                 batch = batch.to(device)
-#                 batch_embedding = dino(batch).cpu()
-#                 embeddings.append(batch_embedding)
-#         embeddings = torch.cat(embeddings)
-
-#         torch.save(embeddings, EMBEDDINGS_DATASET)
-#         print(embeddings.shape)
-
 
 # if args.fucci_gmm or args.all:
 #     from sklearn.mixture import GaussianMixture
