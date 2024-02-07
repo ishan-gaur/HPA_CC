@@ -39,7 +39,7 @@ def intensities_to_pseudotime(log_intensities, center=None, rescale=True, auto_s
         center = center_est2.x
     centered_intensities = log_intensities - center
     if rescale:
-        centered_rescaled_intensities = centered_intensities / (np.array([0, 0]) - center)
+        centered_rescaled_intensities = centered_intensities / np.abs(np.array([0, 0]) - center)
     else:
         centered_rescaled_intensities = centered_intensities
     r = np.sqrt(np.sum(centered_rescaled_intensities ** 2, axis=1))

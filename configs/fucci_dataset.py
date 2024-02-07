@@ -40,8 +40,9 @@ norm_strategy
     percentile: threshold to [0, 1] by clipping everything outside the percentiles and rescaling
         must set norm_min and norm_max (None by default, should be integers between 0 and 100)
 """
-norm_strategy = 'min_max'
-norm_min, norm_max = None, None
+norm_strategy = None
+# norm_strategy = 'min_max'
+# norm_min, norm_max = None, None
 # norm_strategy = 'threshold'
 # norm_min, norm_max = 500, 65535
 # norm_strategy = 'percentile'
@@ -54,7 +55,7 @@ rm_border
     True: remove cells whose nuclei touch the image border
 remove_size: remove cells whose bounding box area is smaller than this value (integer)
 """
-rm_border = False
+rm_border = True
 remove_size = 1000
 
 """

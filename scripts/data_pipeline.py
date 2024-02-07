@@ -56,6 +56,7 @@ parser.add_argument('--dinov2', action='store_true', help='Cache dinov2 cls embe
 parser.add_argument('--dino_hpa', action='store_true', help='Cache DINO HPA cls embeddings on reference channels only')
 parser.add_argument('--int_dist', action='store_true', help='Concatenate intensity distributions to embeddings')
 parser.add_argument('--fucci_gmm', action='store_true', help='Fit GMM to FUCCI intensities')
+parser.add_argument('--labels', action='store_true', help='Calculate angular, pseudotime, and phase class labels for the samples')
 parser.add_argument('--batch_size', type=int, default=10, help='Batch size for dino inference')
 parser.add_argument('--device', type=int, default=7, help='GPU device number')
 parser.add_argument('--rebuild', action='store_true', help='Rebuild specifed steps even if files exist')
@@ -141,7 +142,7 @@ except ModuleNotFoundError:
 
 # indices for the actual ML datasets
 RGB_DATASET = DATA_DIR / f"rgb_{args.name}.pt"
-EMBEDDING_TYPE = "dinov2" if args.dinov2 else "dino_hpa" if args.dino_hpa else None
+EMBEDDING_TYPE = "dinov2" if args.dinov2 else "dino_hpa" if (args.dino_hpa or args.all) else None
 if EMBEDDING_TYPE is None:
     EMBEDDINGS_DATASET = None
 else:
@@ -153,6 +154,9 @@ DINO_CONFIG = Path.cwd() / "configs" / "dino_config.yaml"
 
 # GMM_PATH = DATA_DIR / f"gmm_{args.name}.pkl"
 # GMM_PROBS = DATA_DIR / f"gmm_probs_{args.name}.pt"
+ANGULAR_LABELS = DATA_DIR / f"{args.name}_sample_angles.pt"
+PSEUDOTIME_LABELS = DATA_DIR / f"{args.name}_sample_pseudotime.pt"
+PHASE_LABELS = DATA_DIR / f"{args.name}_sample_phase.pt"
 
 CHANNELS = load_channel_names(DATA_DIR) if config.channels is None else config.channels
 if config.channels is None:
@@ -234,10 +238,10 @@ if args.image_mask_cache or args.all:
         save_channel_names(DATA_DIR, CHANNELS)
 
 if args.clean_masks or args.all:
+    print("Cleaning masks")
     if CLEAN_INDEX.exists() and not args.rebuild:
         print("Index file already exists, skipping. Set --rebuild to overwrite.")
     else:
-        print("Cleaning masks")
         assert BASE_INDEX.exists(), "Index file does not exist, run --image_mask_cache first"
         image_paths, cell_mask_paths, nuclei_mask_paths = load_index_paths(BASE_INDEX)
         clean_cell_mask_paths, clean_nuclei_mask_paths, num_original, num_removed = clean_and_save_masks(cell_mask_paths, nuclei_mask_paths, CLEAN_SUFFIX,
@@ -248,10 +252,11 @@ if args.clean_masks or args.all:
         print("Total cells remaining:", num_original - num_removed)
 
 if args.filter_sharpness or args.all:
-    assert CLEAN_INDEX.exists(), "Index file does not exist, run --clean_masks first"
+    print("Filtering masks by sharpness")
     if SHARP_INDEX.exists() and not args.rebuild:
         print("Index file already exists, skipping. Set --rebuild to overwrite.")
     else:
+        assert CLEAN_INDEX.exists(), "Index file does not exist, run --clean_masks first"
         clean_image_paths, clean_cell_mask_paths, clean_nuclei_mask_paths = load_index_paths(CLEAN_INDEX)
         # we just overwrite the segmentation masks with the filtered ones so no need to get new paths
         sharp_cell_mask_paths, sharp_nuclei_mask_paths, num_removed, num_total = filter_masks_by_sharpness(clean_image_paths, 
@@ -322,20 +327,21 @@ if args.single_cell or args.all:
 
         dataset_config = config
 
-if args.rgb or args.all:
-    assert not no_name, "Name of dataset must be specified"
-    assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
-    if SimpleDataset.has_cache_files(RGB_DATASET) and not args.rebuild:
-        print("RGB images file already exists, skipping. Set --rebuild to overwrite.")
-    else:
-        print("Creating RGB images")
-        assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
-        assert CONFIG_FILE.exists(), "Config file does not exist for the dataset, something might have gone wrong when you ran --single_cell"
-        dataset = CellImageDataset(NAME_INDEX, dataset_config.cmaps, batch_size=args.batch_size)
-        rgb_dataset = dataset.as_rgb()
-        rgb_dataset.save(RGB_DATASET)
+# if args.rgb or args.all:
+#     assert not no_name, "Name of dataset must be specified"
+#     assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
+#     if SimpleDataset.has_cache_files(RGB_DATASET) and not args.rebuild:
+#         print("RGB images file already exists, skipping. Set --rebuild to overwrite.")
+#     else:
+#         print("Creating RGB images")
+#         assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
+#         assert CONFIG_FILE.exists(), "Config file does not exist for the dataset, something might have gone wrong when you ran --single_cell"
+#         dataset = CellImageDataset(NAME_INDEX, dataset_config.cmaps, batch_size=args.batch_size)
+#         rgb_dataset = dataset.as_rgb()
+#         rgb_dataset.save(RGB_DATASET)
 
 if args.int_dist or args.all:
+    print("Caching well intensity distributions for each sample")
     if INT_DATASET.exists() and not args.rebuild:
         print("Intensity distributions file already exists, skipping. Set --rebuild to overwrite.")
     else:
@@ -357,6 +363,7 @@ if args.int_dist or args.all:
 
 if args.dinov2:
     from HPA_CC.models.dino import DINO
+    print("Caching dinov2 cls embeddings")
     assert not no_name, "Name of dataset must be specified"
     # do I really need the next line at this point?
     assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
@@ -384,6 +391,7 @@ if args.dinov2:
 
 elif args.dino_hpa or args.all:
     from HPA_CC.models.dino import DINO_HPA
+    print("Caching DINO HPA cls embeddings")
     assert not no_name, "Name of dataset must be specified"
     # do I really need the next line at this point?
     assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
@@ -450,3 +458,64 @@ elif args.dino_hpa or args.all:
 #         plt.savefig(GMM_PLOT)
 #         plt.clf()
 #         print("Saved GMM plot to " + str(GMM_PLOT))
+
+if args.labels or args.all:
+    print("Calculating angular, pseudotime, and phase class labels for the samples")
+    assert not no_name, "Name of dataset must be specified"
+    assert NAME_INDEX.exists(), "Index file for single cell image dataset does not exist, run --single_cell first"
+
+    if ANGULAR_LABELS.exists() and PSEUDOTIME_LABELS.exists() and PHASE_LABELS.exists() and not args.rebuild:
+        print("Labels files already exist, skipping. Set --rebuild to overwrite.")
+    else:
+        from multiprocessing import Pool
+        from HPA_CC.data.img_stats import well_fucci_stats
+        from HPA_CC.utils.pseudotime import intensities_to_pseudotime
+        from sklearn.mixture import BayesianGaussianMixture
+
+        image_paths, cell_mask_paths, nuclei_mask_paths = load_index_paths(NAME_INDEX)
+        paths = list(zip(image_paths, nuclei_mask_paths))
+        with Pool(16) as pool:
+            results = list(tqdm(pool.map(well_fucci_stats, paths), total=len(paths), desc="Getting FUCCI Statistics"))
+        cells_per_well, well_intensities, well_std_int, well_pseudotimes, well_angles = zip(*results)
+        std_full_time, std_full_angles, std_full_std_int = intensities_to_pseudotime(np.concatenate(well_std_int), rescale=False, auto_start=True)
+
+        # Fit the Bayesian GMM to the angular distributions
+        NUM_COMPONENTS, NUM_CLASSES = 7, 4
+        gmm = BayesianGaussianMixture(n_components=7, covariance_type='full', n_init=10)
+        gmm.fit(std_full_angles.reshape(-1, 1))
+
+        def full_comp_to_class(comp):
+            sorted_idx = list(np.argsort(gmm.means_.flatten()))
+            if sorted_idx.index(comp) == 0:
+                return 0
+            return ((sorted_idx.index(comp) - 1) // 2) + 1
+
+        class_likelihoods = np.zeros((len(std_full_std_int), NUM_CLASSES))
+        likelihoods = gmm._estimate_weighted_log_prob(std_full_angles.reshape(-1, 1))
+        for comp in range(gmm.n_components):
+            class_likelihoods[:, full_comp_to_class(comp)] += likelihoods[:, comp]
+        pseudotime_class = np.argmax(class_likelihoods, axis=1)
+
+        # std_full_angles = std_full_angles.flatten()
+        # std_full_time = std_full_time.flatten()
+        # pseudotime_class = pseudotime_class.flatten()
+
+        torch.save(torch.tensor(std_full_angles), ANGULAR_LABELS)
+        torch.save(torch.tensor(std_full_time), PSEUDOTIME_LABELS)
+        torch.save(torch.tensor(pseudotime_class), PHASE_LABELS)
+
+        n_cols = 12
+        n_wells = len(well_angles)
+        n_rows = n_wells // n_cols + 1
+        plt.clf()
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * 4, n_rows * 4))
+        p = 0
+        for i, (well_angle, well_std_int) in enumerate(zip(well_angles, well_std_int)):
+            ps_class = pseudotime_class[p:p + len(well_angle)]
+            p += len(well_angle)
+            ax = axs[i // n_cols, i % n_cols]
+            ax.set_title(f"Well {i}")
+            ax.scatter(x=well_std_int[:, 0], y=well_std_int[:, 1], c=ps_class, cmap='RdYlGn')
+        plt.savefig(OUTPUT_DIR / f"well_pseudotime_labels_{args.name}.png")
+        plt.close()
+        

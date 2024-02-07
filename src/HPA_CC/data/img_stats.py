@@ -6,6 +6,7 @@ from HPA_CC.utils.img_tools import min_max_normalization, rescale_normalization,
 from HPA_CC.utils.img_tools import sample_sharpness
 from HPA_CC.data.data_viz import plot_intensities, barplot_percentiles, cdf_percentiles, histplot_percentiles
 from HPA_CC.data.data_viz import save_image_grid, color_image_by_intensity, plot_hist_w_threshold
+from HPA_CC.utils.pseudotime import intensities_to_pseudotime
 
 
 def pixel_range_info(args, image_paths, CHANNELS, OUTPUT_DIR):
@@ -96,3 +97,19 @@ def sharpness_dry_run(dataset_image_paths, sharpness_threshold, output_dir, cmap
     print(f"That is {len(filtered_out_images) / len(dataset_images) * 100:.2f}% of the dataset")
     nrow = int(len(filtered_out_images) ** 0.5)
     save_image_grid(filtered_out_images, output_dir / f"filtered_out_{sharpness_threshold}.png", nrow=nrow, cmaps=cmaps)
+
+def well_fucci_stats(paths, gmnn_idx=2, cdt1_idx=3):
+    image_path, mask_path = paths
+    sc_images = torch.load(image_path) # Cells x Channels x H x W
+    sc_images = sc_images[:, [gmnn_idx, cdt1_idx]] # only calculating for GMNN and CDT1
+    nuclei_masks = torch.load(mask_path) # Cells x H x W
+    sc_nuclei = sc_images * nuclei_masks[:, None]
+    mean_intensities = torch.sum(sc_nuclei, dim=(2, 3)) / torch.sum(nuclei_masks[:, None], dim=(2, 3)) # only calculating for GMNN and CDT1
+    min_nonzero_GMNN = torch.min(mean_intensities[:, 0][mean_intensities[:, 0] > 0])
+    min_nonzero_CDT1 = torch.min(mean_intensities[:, 1][mean_intensities[:, 1] > 0])
+    log_mean_GMNN = torch.log(mean_intensities[:, 0] + min_nonzero_GMNN)
+    log_mean_CDT1 = torch.log(mean_intensities[:, 1] + min_nonzero_CDT1)
+    log_mean_fucci_intensities = torch.stack((log_mean_GMNN, log_mean_CDT1), dim=1)
+    fucci_time, raw_time, well_std_int = intensities_to_pseudotime(log_mean_fucci_intensities.numpy())
+    raw_time = raw_time * 2 * np.pi - np.pi
+    return len(sc_images), log_mean_fucci_intensities, well_std_int, fucci_time, raw_time

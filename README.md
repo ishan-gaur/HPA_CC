@@ -20,6 +20,8 @@ This just produces a summary of the numeber of images per microscope type in the
 ## pseudotime_labels.py
 
 # DevLog
+2/7/24: __TODO__ change the pseudotime labels to match the distribution from the cell-cycle paper
+
 2/4/24: WHAT HAPPENED TO MY OTHER NOTES? Also need to add the HPA DINO module
 __TODO__ add back the version warnings if modifying the packages doesn't work
 __TODO__ make install.sh install non develop mode for pip
