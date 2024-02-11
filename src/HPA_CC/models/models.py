@@ -129,12 +129,13 @@ class Classifier(nn.Module):
         self.model.append(nn.Linear(d_hidden, d_output))
         self.model.append(nn.Softmax(dim=-1))
         self.model = nn.Sequential(*self.model)
+        self.focal = focal
         self.loss_fn = nn.CrossEntropyLoss() if not focal else FocalLoss()
 
     def forward(self, x):
         return self.model(x)
 
     def loss(self, x, y):
-        if y.ndim > 1:
+        if self.focal and y.ndim > 1:
             y = y.argmax(dim=-1)
         return self.loss_fn(x, y)
