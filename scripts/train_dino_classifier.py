@@ -18,6 +18,7 @@ log_dirs_home = Path("/data/ishang/pseudotime_pred/")
 config_env()
 args = get_args()
 
+focal = True
 soft = False
 HPA = True # use HPA DINO embedding or normal
 ref_concat = True
@@ -43,6 +44,7 @@ config = {
     "lr": 1e-4,
     "epochs": args.epochs,
     "soft": soft,
+    "focal": focal,
     "n_hidden": 0,
     "d_hidden": DINO.CLS_DIM * 2,
     # "dropout": (0.8, 0.5, 0.2)
@@ -60,7 +62,8 @@ print_with_time("Setting up data module...")
 fucci_path = Path(args.data_dir)
 dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], HPA, "phase")
 model = ClassifierLit(d_input=DINO_INPUT, d_output=NUM_CLASSES, d_hidden=config["d_hidden"], n_hidden=config["n_hidden"], 
-                        dropout=config["dropout"], batchnorm=config["batchnorm"], lr=config["lr"], soft=config["soft"])
+                        dropout=config["dropout"], batchnorm=config["batchnorm"], lr=config["lr"], soft=config["soft"], 
+                        focal=config["focal"])
 
 print_with_time("Setting up trainer...")
 logger = TrainerLogger(model, config, args.name_run, project_name, log_dirs_home)

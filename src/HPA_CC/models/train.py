@@ -16,6 +16,7 @@ from lightning import LightningModule
 import wandb
 from lightning.pytorch.utilities import rank_zero_only
 import pandas as pd
+from warnings import warn
 
 def print_with_time(msg):
     print(f"[{time.strftime('%m/%d/%Y @ %H:%M')}] {msg}")
@@ -306,6 +307,7 @@ class ClassifierLit(LightningModule):
         d_output: int = 3,
         lr: float = 5e-5,
         soft: bool = False,
+        focal: bool = False,
         dropout: bool = False,
         batchnorm: bool = False,
     ):
@@ -316,12 +318,16 @@ class ClassifierLit(LightningModule):
         # if conv:
         #     self.model = ConvClassifier(imsize=imsize, nc=nc, nf=nf, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, dropout=dropout)
         # else:
-        self.model = Classifier(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, dropout=dropout, batchnorm=batchnorm)
+        self.model = Classifier(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, focal=focal,
+                                dropout=dropout, batchnorm=batchnorm)
         self.model = torch.compile(self.model)
         self.lr = lr
         self.train_preds, self.val_preds, self.test_preds = [], [], []
         self.train_labels, self.val_labels, self.test_labels = [], [], []
         self.soft = soft
+        self.focal = focal
+        if self.soft and self.focal:
+            warn("Soft and focal loss are both enabled, soft loss will be coerced into regular cross entropy loss")
         self.num_classes = d_output
 
     def forward(self, x):
@@ -331,18 +337,20 @@ class ClassifierLit(LightningModule):
         x, y = batch
         y_pred = self(x)
 
-        soft_y = torch.exp(y) / torch.sum(torch.exp(y), dim=-1, keepdim=True)
         label_y = torch.argmax(y, dim=-1)
-        soft_loss = self.model.loss(y_pred, soft_y)
         label_loss = self.model.loss(y_pred, label_y)
+        self.log(f"{stage}/label_loss", label_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+
+        if not self.focal:
+            soft_y = torch.exp(y) / torch.sum(torch.exp(y), dim=-1, keepdim=True)
+            soft_loss = self.model.loss(y_pred, soft_y)
+            self.log(f"{stage}/soft_loss", soft_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
         loss = soft_loss if self.soft else label_loss
         preds = torch.argmax(y_pred, dim=-1)
         labels = label_y
 
         preds, labels = preds.cpu().numpy(), labels.cpu().numpy()
-        self.log(f"{stage}/soft_loss", soft_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-        self.log(f"{stage}/label_loss", label_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         self.log(f"{stage}/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
         return loss, preds, labels
