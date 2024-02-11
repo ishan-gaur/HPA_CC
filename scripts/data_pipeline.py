@@ -7,7 +7,8 @@ from pathlib import Path
 from importlib import import_module
 from tqdm import tqdm
 
-from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
+from HPA_CC.data.dataset import CellImageDataset, intensity_data_name, cls_embedding_name
+from HPA_CC.data.dataset import angle_label_name, pseudotime_label_name, phase_label_name
 import HPA_CC.data.pipeline as pipeline
 from HPA_CC.data.pipeline import create_image_paths_file, image_paths_from_folders, create_data_path_index, load_index_paths, load_channel_names, save_channel_names
 from HPA_CC.data.pipeline import segmentator_setup, get_masks, normalize_images, filter_masks_by_sharpness, clean_and_save_masks, crop_images, resize
@@ -142,21 +143,20 @@ except ModuleNotFoundError:
 
 # indices for the actual ML datasets
 RGB_DATASET = DATA_DIR / f"rgb_{args.name}.pt"
-EMBEDDING_TYPE = "dinov2" if args.dinov2 else "dino_hpa" if (args.dino_hpa or args.all) else None
-if EMBEDDING_TYPE is None:
+if not any([args.dinov2, args.dino_hpa, args.all]):
     EMBEDDINGS_DATASET = None
 else:
-    EMBEDDINGS_DATASET = DATA_DIR / f"embeddings_{args.name}_{EMBEDDING_TYPE}.pt"
+    EMBEDDINGS_DATASET = cls_embedding_name(DATA_DIR, args.name, hpa=(not args.dinov2))
 
-INT_DATASET = DATA_DIR / f"intensity_distributions_{args.name}.pt"
+INT_DATASET = intensity_data_name(DATA_DIR, args.name)
 
 DINO_CONFIG = Path.cwd() / "configs" / "dino_config.yaml"
 
 # GMM_PATH = DATA_DIR / f"gmm_{args.name}.pkl"
 # GMM_PROBS = DATA_DIR / f"gmm_probs_{args.name}.pt"
-ANGULAR_LABELS = DATA_DIR / f"{args.name}_sample_angles.pt"
-PSEUDOTIME_LABELS = DATA_DIR / f"{args.name}_sample_pseudotime.pt"
-PHASE_LABELS = DATA_DIR / f"{args.name}_sample_phase.pt"
+ANGULAR_LABELS = angle_label_name(DATA_DIR, args.name)
+PSEUDOTIME_LABELS = pseudotime_label_name(DATA_DIR, args.name)
+PHASE_LABELS = phase_label_name(DATA_DIR, args.name)
 
 CHANNELS = load_channel_names(DATA_DIR) if config.channels is None else config.channels
 if config.channels is None:
@@ -358,6 +358,8 @@ if args.int_dist or args.all:
             well_int_levels, _ = get_batch_percentiles(well_images.cpu().numpy(), percentiles)
             well_percentiles.append(np.array([well_int_levels for _ in range(len(well_images))]))
         well_percentiles = np.concatenate(well_percentiles)
+        well_percentiles = np.concatenate((well_percentiles[:, 0], well_percentiles[:, 1]), axis=1)
+        well_percentiles = torch.tensor(well_percentiles)
         torch.save(well_percentiles, INT_DATASET)
         print(well_percentiles.shape)
 
@@ -493,16 +495,14 @@ if args.labels or args.all:
         class_likelihoods = np.zeros((len(std_full_std_int), NUM_CLASSES))
         likelihoods = gmm._estimate_weighted_log_prob(std_full_angles.reshape(-1, 1))
         for comp in range(gmm.n_components):
-            class_likelihoods[:, full_comp_to_class(comp)] += likelihoods[:, comp]
+            p = class_likelihoods[:, full_comp_to_class(comp)]
+            class_likelihoods[:, full_comp_to_class(comp)] = np.log(np.exp(p) + np.exp(likelihoods[:, comp]))
         pseudotime_class = np.argmax(class_likelihoods, axis=1)
 
-        # std_full_angles = std_full_angles.flatten()
-        # std_full_time = std_full_time.flatten()
-        # pseudotime_class = pseudotime_class.flatten()
-
-        torch.save(torch.tensor(std_full_angles), ANGULAR_LABELS)
-        torch.save(torch.tensor(std_full_time), PSEUDOTIME_LABELS)
-        torch.save(torch.tensor(pseudotime_class), PHASE_LABELS)
+        torch.save(torch.tensor(std_full_angles), ANGULAR_LABELS) # [0, 1]
+        torch.save(torch.tensor(std_full_time), PSEUDOTIME_LABELS) # [0, 1]
+        # torch.save(torch.tensor(pseudotime_class), PHASE_LABELS) # {0, 1, 2, 3}
+        torch.save(torch.tensor(class_likelihoods), PHASE_LABELS) # shape (n_samples, 4), likelihoods of each class
 
         n_cols = 12
         n_wells = len(well_angles)

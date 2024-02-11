@@ -52,6 +52,8 @@ class DINO(nn.Module):
         return crop_slices
 
 class DINO_HPA:
+    CLS_DIM = 768
+    CONCAT_CLS_DIM = 768 * 2
     def __init__(self, config_file, batch_size=100, device=("cuda:0" if torch.cuda.is_available() else "cpu")) -> None:
 
         device = torch.device(device)

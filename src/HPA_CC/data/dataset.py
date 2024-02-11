@@ -1,9 +1,10 @@
 from pathlib import Path
 import torch    
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader, random_split
 from microfilm.microplot import microshow
 from microfilm.colorify import multichannel_to_rgb
 from HPA_CC.data.pipeline import load_channel_names, load_index_paths, silent
+from lightning import LightningDataModule
 from tqdm import tqdm
 import numpy as np
 
@@ -172,3 +173,94 @@ class SimpleDataset(Dataset):
     def has_cache_files(path):
         cache_files = list(path.parent.glob(f"{path.stem}-*.pt"))
         return len(cache_files) > 0
+
+
+class RefCLSDM(LightningDataModule):
+    """
+    TODO: move the naming of the dataset types here and then read that from the data_pipeline so it's consistent if there 
+    are changes to the data module/pipeline
+
+    Data module for training a classifier on top of DINO embeddings of DAPI+TUBL reference channels
+    Trying to match labels from a GMM or Ward cluster labeling algorithm of the FUCCI channel intensities
+    """
+    def __init__(self, data_dir, data_name, batch_size, num_workers, split, hpa, label, dataset=None, concat_well_stats=False, seed=42):
+        super().__init__()
+        self.data_dir = data_dir
+        self.data_name = data_name
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.split = split
+
+        self.dataset = RefClsPseudo(self.data_dir, self.data_name, hpa, label, concat_well_stats=concat_well_stats, dataset=dataset)
+        generator = torch.Generator().manual_seed(seed)
+        self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=generator)
+        self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
+
+    def __shared_dataloader(self, dataset, shuffle=False):
+        return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, shuffle=shuffle)
+
+    def train_dataloader(self):
+        return self.__shared_dataloader(self.train_dataset, shuffle=True)
+    
+    def val_dataloader(self):
+        return self.__shared_dataloader(self.val_dataset)
+    
+    def test_dataloader(self):
+        return self.__shared_dataloader(self.test_dataset)
+
+class RefClsPseudo(Dataset):
+    """
+    Needs to handle whether or not to concatenate well intensity statistics onto the embeddings
+    Needs to be able to read out each microscope in the data
+    """
+    def __init__(self, data_dir, data_name, hpa, label, concat_well_stats=False, dataset=None):
+        assert label in RefClsPseudo.label_types(), f"Invalid label type, must be in {RefClsPseudo.label_types()}"
+
+        # TODO support for the dataset name
+        cls_file = cls_embedding_name(data_dir, data_name, hpa=hpa)
+        print(f"Loading {cls_file}")
+        self.X = torch.load(cls_file)
+        if concat_well_stats:
+            intensity_file = intensity_data_name(data_dir, data_name)
+            print(f"Loading {intensity_file}")
+            self.well_stats = torch.load(intensity_file)
+            print("X shape:", self.X.shape)
+            self.X = torch.cat((self.X, self.well_stats), dim=1)
+
+        if label == "angle":
+            label_file = angle_label_name(data_dir, data_name)
+        elif label == "pseudotime":
+            label_file = pseudotime_label_name(data_dir, data_name)
+        elif label == "phase":
+            label_file = phase_label_name(data_dir, data_name)
+        print(f"Loading {label_file}")
+        self.Y = torch.load(label_file)
+        print(self.Y.min(), self.Y.max())
+
+        self.X, self.Y = self.X.float(), self.Y.float()
+        print("X shape:", self.X.shape)
+        print("Y shape:", self.Y.shape)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.Y[idx]
+
+    def __len__(self):
+        return len(self.X)
+
+    def label_types():
+        return ["angle", "pseudotime", "phase"]
+
+def intensity_data_name(data_dir, data_name):
+    return data_dir / f"intensity_distributions_{data_name}.pt"
+
+def cls_embedding_name(data_dir, data_name, hpa=True):
+    return data_dir / f"embeddings_{data_name}_{'dino_hpa' if hpa else 'dinov2'}.pt"
+
+def angle_label_name(data_dir, data_name):
+    return data_dir / f"{data_name}_sample_angles.pt"
+
+def pseudotime_label_name(data_dir, data_name):
+    return data_dir / f"{data_name}_sample_pseudotime.pt"
+
+def phase_label_name(data_dir, data_name):
+    return data_dir / f"{data_name}_sample_phase.pt"

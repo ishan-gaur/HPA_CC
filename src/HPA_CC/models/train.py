@@ -6,6 +6,16 @@ from glob import glob
 from pathlib import Path
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
+from HPA_CC.models.models import PseudoRegressor, Classifier
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import confusion_matrix
+from torch import optim
+from lightning import LightningModule
+import wandb
+from lightning.pytorch.utilities import rank_zero_only
+import pandas as pd
 
 def print_with_time(msg):
     print(f"[{time.strftime('%m/%d/%Y @ %H:%M')}] {msg}")
@@ -21,16 +31,18 @@ class TrainerLogger:
         if not self.log_folder.exists():
             os.makedirs(self.log_folder, exist_ok=True)
         self.lit_dir = self.log_folder / "lightning_logs"
+        print(f"Logging to {self.log_folder}")
         wandb_dir = self.log_folder
 
+        # wandb.init(mode="disabled")
         self.wandb_log = WandbLogger(
             project=project_name,
             log_model=True,
             save_dir=wandb_dir,
             config=config
         )
-        
-        self.wandb_log.watch(model, log="all", log_freq=10)
+        # self.wandb_log.watch(model, log="all", log_freq=10)
+
 
         val_checkpoint_callback = ModelCheckpoint(
             save_top_k=1,
@@ -75,3 +87,319 @@ def find_checkpoint_file(checkpoint, log_dirs_home, best=False):
     if not checkpoint_file.exists():
         raise ValueError(f"Checkpoint path {checkpoint_file} does not exist")
     return checkpoint_file
+
+class PseudoRegressorLit(LightningModule):
+    """
+    Lightning module for training a regression model
+    Supports logging for:
+    - MSE loss
+    - Histogram of predicted pseudotimes
+    - Psuedotime residuals
+    """
+    def __init__(self,
+        d_input: int = 1024,
+        d_hidden: int = 4 * 1024,
+        n_hidden: int = 1,
+        d_output: int = 1,
+        lr: float = 1e-4,
+        dropout: bool = False,
+        batchnorm: bool = False,
+        loss_type: str = "arc",
+        reweight_loss: bool = False,
+        bins: int = 10,
+    ):
+        super().__init__()
+        # if d_hidden is None:
+        #     d_hidden = d_input
+        self.save_hyperparameters()
+        self.model = PseudoRegressor(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, dropout=dropout, 
+                                    batchnorm=batchnorm)
+        self.model = torch.compile(self.model)
+        self.lr = lr
+        self.train_preds, self.val_preds, self.test_preds = [], [], []
+        self.train_labels, self.val_labels, self.test_labels = [], [], []
+        self.num_classes = d_output
+        self.loss_type = loss_type
+        self.reweight_loss = reweight_loss
+        self.bins = bins
+
+    def forward(self, x):
+        return self.model(x)
+
+    def _shared_step(self, batch, batch_idx, stage):
+        x, y = batch
+        theta_pred = self(x)
+        theta_pred = theta_pred.squeeze()
+        y = y.squeeze()
+        cart_loss = self.model.cart_loss(theta_pred, y)
+        arc_loss = self.model.arc_loss(theta_pred, y)
+        reg_loss = self.model.reg_loss(theta_pred, y)
+        preds, labels = theta_pred.detach().cpu(), y.detach().cpu()
+        self.log(f"{stage}/reg_loss", torch.mean(reg_loss), on_step=True, on_epoch=True, logger=True, sync_dist=True)
+        self.log(f"{stage}/cart_loss", torch.mean(cart_loss), on_step=True, on_epoch=True, logger=True, sync_dist=True)
+        self.log(f"{stage}/arc_loss", torch.mean(arc_loss), on_step=True, on_epoch=True, logger=True, sync_dist=True)
+        losses = {"cart": cart_loss, "arc": arc_loss, "reg": reg_loss}
+        loss = losses[self.loss_type]
+        self.log(f"{stage}/loss", torch.mean(loss), on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        if self.reweight_loss:
+            loss = self.model.bin_reweight(loss, y, self.bins)
+            self.log(f"{stage}/loss_reweighted", torch.mean(loss), on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        loss = torch.mean(loss)
+        return loss, preds, labels
+    
+    def _log_image(self, stage, name, ax):
+        if type(ax) == sns.JointGrid:
+            fig = ax.figure
+        else:
+            fig = ax.get_figure()
+        self.logger.experiment.log({
+            f"{stage}/{name}": wandb.Image(fig),
+        })
+
+    @rank_zero_only
+    def _on_shared_epoch_end(self, preds, labels, stage):
+        preds, labels = torch.cat(preds), torch.cat(labels)
+        preds, labels = preds.flatten(), labels.flatten()
+    
+        # plot the intensity kdeplot
+        plt.clf()
+        plt.title("Predicted Pseudotime Distribution")
+        # plt.xlabel("Pseudotime")
+        # plt.ylabel("Counts")
+        preds_pseudotime = PseudoRegressor.angle_to_pseudo(preds)
+        ax = sns.histplot(preds_pseudotime, bins=50)
+        ax.set_xlabel("Pseudotime")
+        ax.set_ylabel("Counts")
+        plt.tight_layout()
+        self._log_image(stage, "pseudotime_hist", ax)
+        plt.close()
+
+        plt.clf()
+        plt.title("Predicted Raw Angles Distribution")
+        # plt.xlabel("Theta")
+        # plt.ylabel("Counts")
+        ax = sns.histplot(preds, bins=50)
+        ax.set_xlabel("Theta")
+        ax.set_ylabel("Counts")
+        plt.tight_layout()
+        self._log_image(stage, "preds_raw_hist", ax)
+        plt.close()
+
+        # plot the residuals
+        plt.clf()
+        plt.title("Residuals")
+        # plt.ylabel("Label - Pred")
+        # plt.xlabel("Label Pseudotime")
+        residuals = PseudoRegressor.arc_distance(preds, labels)
+        label_key, resid_key = "Label Pseudotime", "Label - Pred Residuals"
+        df = pd.DataFrame({label_key: labels, resid_key: residuals})
+        ax = sns.jointplot(data=df, x=label_key, y=resid_key, kind="hist")
+        self._log_image(stage, "residuals", ax)
+        plt.close()
+
+        # create confusion matrix
+        bins = torch.linspace(0, 1, self.bins + 1).to(preds.device)
+        binned_preds = torch.bucketize(preds_pseudotime, bins)
+        binned_preds[binned_preds == 0] = 1
+        binned_preds -= 1
+        binned_labels = torch.bucketize(labels, bins)
+        binned_labels[binned_labels == 0] = 1
+        binned_labels -= 1
+
+        # need to add one example of each class prediction pair to the confusion matrix
+        preds_lapl = [binned_preds]
+        preds_lapl.extend([torch.arange(len(bins) - 1).to(preds.device)] * (len(bins) - 1))
+        binned_preds = torch.cat(preds_lapl)
+        labels_lapl = [binned_labels]
+        labels_lapl.extend([torch.ones(len(bins) - 1).to(preds.device) * i for i in range(len(bins) - 1)])
+        binned_labels = torch.cat(labels_lapl)
+
+        cm = confusion_matrix(binned_labels, binned_preds)
+        # normalize the rows
+        cm = cm / cm.sum(axis=1, keepdims=True)
+        # print(cm)
+        # ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels))
+        plt.clf()
+        ax = sns.heatmap(cm, vmin=0, vmax=1.0, annot=True, fmt=".2f")
+        ax.set_xlabel("Predicted")
+        ax.xaxis.set_ticklabels([f"{i:.2f}" for i in bins[1:]])
+        ax.set_ylabel("True")
+        ax.yaxis.set_ticklabels([f"{i:.2f}" for i in bins[1:]])
+        self._log_image(stage, f"cm_{self.bins}", ax)
+        plt.close()
+
+        # create confusion matrix
+        eval_bins = 3
+        bins = torch.linspace(0, 1, eval_bins + 1).to(preds.device)
+        binned_preds = torch.bucketize(preds_pseudotime, bins)
+        binned_preds[binned_preds == 0] = 1
+        binned_preds -= 1
+        binned_labels = torch.bucketize(labels, bins)
+        binned_labels[binned_labels == 0] = 1
+        binned_labels -= 1
+
+        # need to add one example of each class prediction pair to the confusion matrix
+        preds_lapl = [binned_preds]
+        preds_lapl.extend([torch.arange(len(bins) - 1).to(preds.device)] * (len(bins) - 1))
+        binned_preds = torch.cat(preds_lapl)
+        labels_lapl = [binned_labels]
+        labels_lapl.extend([torch.ones(len(bins) - 1).to(preds.device) * i for i in range(len(bins) - 1)])
+        binned_labels = torch.cat(labels_lapl)
+
+        cm = confusion_matrix(binned_labels, binned_preds)
+        # normalize the rows
+        cm = cm / cm.sum(axis=1, keepdims=True)
+        # print(cm)
+        plt.clf()
+        # ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels))
+        ax = sns.heatmap(cm, vmin=0, vmax=1.0, annot=True, fmt=".2f")
+        ax.set_xlabel("Predicted")
+        ax.xaxis.set_ticklabels([f"{i:.2f}" for i in bins[1:]])
+        ax.set_ylabel("True")
+        ax.yaxis.set_ticklabels([f"{i:.2f}" for i in bins[1:]])
+        self._log_image(stage, f"cm", ax)
+        plt.close()
+    
+    def training_step(self, batch, batch_idx):
+        loss, preds, labels = self._shared_step(batch, batch_idx, "train")
+        self.train_preds.append(preds)
+        self.train_labels.append(labels)
+        return loss
+
+    def on_train_epoch_end(self):
+        self._on_shared_epoch_end(self.train_preds, self.train_labels, "train")
+        self.train_preds, self.train_labels = [], []
+
+    def validation_step(self, batch, batch_idx):
+        loss, preds, labels = self._shared_step(batch, batch_idx, "validate")
+        self.val_preds.append(preds)
+        self.val_labels.append(labels)
+        return loss
+
+    def on_validation_epoch_end(self):
+        self._on_shared_epoch_end(self.val_preds, self.val_labels, "validate")
+        self.val_preds, self.val_labels = [], []
+    
+    def test_step(self, batch, batch_idx):
+        loss, preds, labels = self._shared_step(batch, batch_idx, "test")
+        self.test_preds.append(preds)
+        self.test_labels.append(labels)
+        return loss
+
+    def on_test_epoch_end(self):
+        self._on_shared_epoch_end(self.test_preds, self.test_labels, "test")
+        self.test_preds, self.test_labels = [], []
+
+    def configure_optimizers(self):
+        return optim.Adam(self.parameters(), lr=self.lr)
+
+
+class ClassifierLit(LightningModule):
+    def __init__(self,
+        # conv: bool = False,
+        d_input: int = 1024,
+        d_hidden = None,
+        n_hidden: int = 0,
+        # imsize: int = 256,
+        # nc: int = 2,
+        # nf: int = 64,
+        d_output: int = 3,
+        lr: float = 5e-5,
+        soft: bool = False,
+        dropout: bool = False,
+        batchnorm: bool = False,
+    ):
+        super().__init__()
+        if d_hidden is None:
+            d_hidden = d_input
+        self.save_hyperparameters()
+        # if conv:
+        #     self.model = ConvClassifier(imsize=imsize, nc=nc, nf=nf, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, dropout=dropout)
+        # else:
+        self.model = Classifier(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, dropout=dropout, batchnorm=batchnorm)
+        self.model = torch.compile(self.model)
+        self.lr = lr
+        self.train_preds, self.val_preds, self.test_preds = [], [], []
+        self.train_labels, self.val_labels, self.test_labels = [], [], []
+        self.soft = soft
+        self.num_classes = d_output
+
+    def forward(self, x):
+        return self.model(x)
+
+    def __shared_step(self, batch, batch_idx, stage):
+        x, y = batch
+        y_pred = self(x)
+
+        soft_y = torch.exp(y) / torch.sum(torch.exp(y), dim=-1, keepdim=True)
+        label_y = torch.argmax(y, dim=-1)
+        soft_loss = self.model.loss(y_pred, soft_y)
+        label_loss = self.model.loss(y_pred, label_y)
+
+        loss = soft_loss if self.soft else label_loss
+        preds = torch.argmax(y_pred, dim=-1)
+        labels = label_y
+
+        preds, labels = preds.cpu().numpy(), labels.cpu().numpy()
+        self.log(f"{stage}/soft_loss", soft_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log(f"{stage}/label_loss", label_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        self.log(f"{stage}/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+
+        return loss, preds, labels
+    
+    def __on_shared_epoch_end(self, preds, labels, stage):
+        plt.clf()
+        if self.num_classes == 3:
+            classes = ["G1", "S", "G2"]
+        elif self.num_classes == 6:
+            classes = ["Stop-G1", "G1", "G1-S", "S-G2", "G2", "G2-M"]
+        elif self.num_classes == 4:
+            classes = ["M-G1", "G1", "S-G2", "G2"]
+        preds, labels = np.concatenate(preds), np.concatenate(labels)
+        cm = confusion_matrix(labels, preds)
+        # ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels))
+        ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels) / 3)
+        ax.set_xlabel("Predicted")
+        ax.xaxis.set_ticklabels(classes)
+        ax.set_ylabel("True")
+        ax.yaxis.set_ticklabels(classes)
+        fig = ax.get_figure()
+        self.logger.experiment.log({
+            f"{stage}/cm": wandb.Image(fig),
+        })
+
+        for i, class_name in enumerate(classes):
+            self.log(f"{stage}/accuracy_{class_name}", cm[i, i] / np.sum(cm[i]), on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+
+    def training_step(self, batch, batch_idx):
+        loss, preds, labels = self.__shared_step(batch, batch_idx, "train")
+        self.train_preds.append(preds)
+        self.train_labels.append(labels)
+        return loss
+
+    def on_train_epoch_end(self):
+        self.__on_shared_epoch_end(self.train_preds, self.train_labels, "train")
+        self.train_preds, self.train_labels = [], []
+
+    def validation_step(self, batch, batch_idx):
+        loss, preds, labels = self.__shared_step(batch, batch_idx, "validate")
+        self.val_preds.append(preds)
+        self.val_labels.append(labels)
+        return loss
+
+    def on_validation_epoch_end(self):
+        self.__on_shared_epoch_end(self.val_preds, self.val_labels, "validate")
+        self.val_preds, self.val_labels = [], []
+    
+    def test_step(self, batch, batch_idx):
+        loss, preds, labels = self.__shared_step(batch, batch_idx, "test")
+        self.test_preds.append(preds)
+        self.test_labels.append(labels)
+        return loss
+
+    def on_test_epoch_end(self):
+        self.__on_shared_epoch_end(self.test_preds, self.test_labels, "test")
+        self.test_preds, self.test_labels = [], []
+
+    def configure_optimizers(self):
+        return optim.Adam(self.parameters(), lr=self.lr)
