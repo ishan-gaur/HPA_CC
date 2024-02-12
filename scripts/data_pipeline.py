@@ -58,6 +58,7 @@ parser.add_argument('--dino_hpa', action='store_true', help='Cache DINO HPA cls 
 parser.add_argument('--int_dist', action='store_true', help='Concatenate intensity distributions to embeddings')
 parser.add_argument('--fucci_gmm', action='store_true', help='Fit GMM to FUCCI intensities')
 parser.add_argument('--labels', action='store_true', help='Calculate angular, pseudotime, and phase class labels for the samples')
+parser.add_argument('--scope', action='store_true', help='Calculate phase labels using a GMM trained at the microscope level')
 parser.add_argument('--batch_size', type=int, default=10, help='Batch size for dino inference')
 parser.add_argument('--device', type=int, default=7, help='GPU device number')
 parser.add_argument('--rebuild', action='store_true', help='Rebuild specifed steps even if files exist')
@@ -478,31 +479,33 @@ if args.labels or args.all:
         paths = list(zip(image_paths, nuclei_mask_paths))
         with Pool(16) as pool:
             results = list(tqdm(pool.map(well_fucci_stats, paths), total=len(paths), desc="Getting FUCCI Statistics"))
-        cells_per_well, well_intensities, well_std_int, well_pseudotimes, well_angles = zip(*results)
+        scope_names, cells_per_well, well_intensities, well_std_int, well_pseudotimes, well_angles = zip(*results)
         std_full_time, std_full_angles, std_full_std_int = intensities_to_pseudotime(np.concatenate(well_std_int), rescale=False, auto_start=True)
 
         # Fit the Bayesian GMM to the angular distributions
-        NUM_COMPONENTS, NUM_CLASSES = 7, 4
-        gmm = BayesianGaussianMixture(n_components=7, covariance_type='full', n_init=10)
-        gmm.fit(std_full_angles.reshape(-1, 1))
+        if args.scope:
+            NUM_COMPONENTS, NUM_CLASSES = 7, 4
+        else:
+            NUM_COMPONENTS, NUM_CLASSES = 7, 4
+            gmm = BayesianGaussianMixture(n_components=7, covariance_type='full', n_init=10)
+            gmm.fit(std_full_angles.reshape(-1, 1))
 
-        def full_comp_to_class(comp):
-            sorted_idx = list(np.argsort(gmm.means_.flatten()))
-            if sorted_idx.index(comp) == 0:
-                return 0
-            return ((sorted_idx.index(comp) - 1) // 2) + 1
+            def full_comp_to_class(comp):
+                sorted_idx = list(np.argsort(gmm.means_.flatten()))
+                if sorted_idx.index(comp) == 0:
+                    return 0
+                return ((sorted_idx.index(comp) - 1) // 2) + 1
 
-        class_likelihoods = np.zeros((len(std_full_std_int), NUM_CLASSES))
-        likelihoods = gmm._estimate_weighted_log_prob(std_full_angles.reshape(-1, 1))
-        for comp in range(gmm.n_components):
-            p = class_likelihoods[:, full_comp_to_class(comp)]
-            class_likelihoods[:, full_comp_to_class(comp)] = np.log(np.exp(p) + np.exp(likelihoods[:, comp]))
-        pseudotime_class = np.argmax(class_likelihoods, axis=1)
+            class_likelihoods = np.zeros((len(std_full_std_int), NUM_CLASSES))
+            likelihoods = gmm._estimate_weighted_log_prob(std_full_angles.reshape(-1, 1))
+            for comp in range(gmm.n_components):
+                p = class_likelihoods[:, full_comp_to_class(comp)]
+                class_likelihoods[:, full_comp_to_class(comp)] = np.log(np.exp(p) + np.exp(likelihoods[:, comp]))
+            pseudotime_class = np.argmax(class_likelihoods, axis=1)
 
-        torch.save(torch.tensor(std_full_angles), ANGULAR_LABELS) # [0, 1]
-        torch.save(torch.tensor(std_full_time), PSEUDOTIME_LABELS) # [0, 1]
-        # torch.save(torch.tensor(pseudotime_class), PHASE_LABELS) # {0, 1, 2, 3}
-        torch.save(torch.tensor(class_likelihoods), PHASE_LABELS) # shape (n_samples, 4), likelihoods of each class
+            torch.save(torch.tensor(std_full_angles), ANGULAR_LABELS) # [0, 1]
+            torch.save(torch.tensor(std_full_time), PSEUDOTIME_LABELS) # [0, 1]
+            torch.save(torch.tensor(class_likelihoods), PHASE_LABELS) # shape (n_samples, 4), likelihoods of each class
 
         n_cols = 12
         n_wells = len(well_angles)

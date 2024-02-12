@@ -100,6 +100,7 @@ def sharpness_dry_run(dataset_image_paths, sharpness_threshold, output_dir, cmap
 
 def well_fucci_stats(paths, gmnn_idx=2, cdt1_idx=3):
     image_path, mask_path = paths
+    scope_name = image_path.parent.name.split('--')[0]
     sc_images = torch.load(image_path) # Cells x Channels x H x W
     sc_images = sc_images[:, [gmnn_idx, cdt1_idx]] # only calculating for GMNN and CDT1
     nuclei_masks = torch.load(mask_path) # Cells x H x W
@@ -112,4 +113,4 @@ def well_fucci_stats(paths, gmnn_idx=2, cdt1_idx=3):
     log_mean_fucci_intensities = torch.stack((log_mean_GMNN, log_mean_CDT1), dim=1)
     fucci_time, raw_time, well_std_int = intensities_to_pseudotime(log_mean_fucci_intensities.numpy())
     raw_time = raw_time * 2 * np.pi - np.pi
-    return len(sc_images), log_mean_fucci_intensities, well_std_int, fucci_time, raw_time
+    return scope_name, len(sc_images), log_mean_fucci_intensities, well_std_int, fucci_time, raw_time
