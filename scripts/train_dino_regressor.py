@@ -13,10 +13,10 @@ log_dirs_home = Path("/data/ishang/pseudotime_pred/")
 config_env()
 args = get_args()
 
-label = "angle" # "angle", "pseudotime", "phase"
+label = "pseudotime" # "angle", "pseudotime", "phase"
 HPA = True # use HPA DINO embedding or normal
 ref_concat = True
-concat_well_stats = True
+concat_well_stats = False
 loss_type = "arc" # "reg", "cart", "arc"
 if not HPA:
     DINO_INPUT = DINO.CLS_DIM
@@ -43,7 +43,7 @@ config = {
     "lr": 1e-5,
     "gradient_clip_val": 5e5,
     "epochs": args.epochs,
-    "n_hidden": 30,
+    "n_hidden": 3,
     # "n_hidden": 1,
     # "d_hidden": DINO_INPUT * 6,
     "d_hidden": DINO_INPUT * 2,

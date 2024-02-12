@@ -60,31 +60,39 @@ class FocalLoss(nn.Module):
         return f'{type(self).__name__}({arg_str})'
 
     def forward(self, x: Tensor, y: Tensor) -> Tensor:
-        if x.ndim > 2:
-            # (N, C, d1, d2, ..., dK) --> (N * d1 * ... * dK, C)
-            c = x.shape[1]
-            x = x.permute(0, *range(2, x.ndim), 1).reshape(-1, c)
-            # (N, d1, d2, ..., dK) --> (N * d1 * ... * dK,)
-            y = y.view(-1)
+        # if x.ndim > 2:
+        #     # (N, C, d1, d2, ..., dK) --> (N * d1 * ... * dK, C)
+        #     c = x.shape[1]
+        #     x = x.permute(0, *range(2, x.ndim), 1).reshape(-1, c)
+        #     # (N, d1, d2, ..., dK) --> (N * d1 * ... * dK,)
+        #     y = y.view(-1)
+        assert x.ndim == 2, f"Expected 2D input, got {x.ndim}D input"
+        if y.ndim == 2 and y.shape[1] == 1:
+            y = y.squeeze()
+        if y.ndim == 1:
+            y = y.view(-1, 1)
+            y = F.one_hot(y, num_classes=x.size(-1)).to(torch.float32)
 
-        unignored_mask = y != self.ignore_index
-        y = y[unignored_mask]
-        if len(y) == 0:
-            return torch.tensor(0.)
-        x = x[unignored_mask]
+        # unignored_mask = y != self.ignore_index
+        # y = y[unignored_mask]
+        # if len(y) == 0:
+        #     return torch.tensor(0.)
+        # x = x[unignored_mask]
 
         # compute weighted cross entropy term: -alpha * log(pt)
         # (alpha is already part of self.nll_loss)
         log_p = F.log_softmax(x, dim=-1)
-        ce = self.nll_loss(log_p, y)
+        # ce = self.nll_loss(log_p, y)
+        ce = -1 * log_p
 
         # get true class column from each row
-        all_rows = torch.arange(len(x))
-        log_pt = log_p[all_rows, y]
+        # all_rows = torch.arange(len(x))
+        # log_pt = log_p[all_rows, y]
+        log_pt = log_p
 
         # compute focal term: (1 - pt)^gamma
         pt = log_pt.exp()
-        focal_term = (1 - pt)**self.gamma
+        focal_term = torch.abs(y - pt).pow(self.gamma)
 
         # the full loss: -alpha * ((1 - pt)^gamma) * log(pt)
         loss = focal_term * ce

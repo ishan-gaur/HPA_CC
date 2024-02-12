@@ -106,8 +106,10 @@ class Classifier(nn.Module):
         dropout: bool = False,
         batchnorm: bool = False,
         focal: bool = True,
+        alpha = None,
     ):
         super().__init__()
+        self.focal = focal
         self.model = nn.ModuleList()
         if batchnorm:
             self.model.append(nn.BatchNorm1d(d_input))
@@ -127,15 +129,18 @@ class Classifier(nn.Module):
         if batchnorm:
             self.model.append(nn.BatchNorm1d(d_hidden))
         self.model.append(nn.Linear(d_hidden, d_output))
-        self.model.append(nn.Softmax(dim=-1))
+        if not self.focal:
+            self.model.append(nn.Softmax(dim=-1))
         self.model = nn.Sequential(*self.model)
-        self.focal = focal
-        self.loss_fn = nn.CrossEntropyLoss() if not focal else FocalLoss()
+        self.loss_fn = nn.CrossEntropyLoss() if not focal else FocalLoss(alpha=alpha)
 
     def forward(self, x):
         return self.model(x)
 
-    def loss(self, x, y):
-        if self.focal and y.ndim > 1:
-            y = y.argmax(dim=-1)
+    def loss(self, x, y, loss_type=None):
+        # if self.focal and y.ndim > 1:
+        #     y = y.argmax(dim=-1)
+        if loss_type == "cross_entropy":
+            x = nn.Softmax(dim=-1)(x)
+            return nn.CrossEntropyLoss()(x, y)
         return self.loss_fn(x, y)

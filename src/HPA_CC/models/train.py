@@ -217,7 +217,8 @@ class PseudoRegressorLit(LightningModule):
 
         cm = confusion_matrix(binned_labels, binned_preds)
         # normalize the rows
-        cm = cm / cm.sum(axis=1, keepdims=True)
+        # cm = cm / cm.sum(axis=1, keepdims=True)
+        cm = cm / cm.sum()
         # print(cm)
         # ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels))
         plt.clf()
@@ -249,7 +250,8 @@ class PseudoRegressorLit(LightningModule):
 
         cm = confusion_matrix(binned_labels, binned_preds)
         # normalize the rows
-        cm = cm / cm.sum(axis=1, keepdims=True)
+        # cm = cm / cm.sum(axis=1, keepdims=True)
+        cm = cm / cm.sum()
         # print(cm)
         plt.clf()
         # ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels))
@@ -308,6 +310,7 @@ class ClassifierLit(LightningModule):
         lr: float = 5e-5,
         soft: bool = False,
         focal: bool = False,
+        alpha = None,
         dropout: bool = False,
         batchnorm: bool = False,
     ):
@@ -318,8 +321,10 @@ class ClassifierLit(LightningModule):
         # if conv:
         #     self.model = ConvClassifier(imsize=imsize, nc=nc, nf=nf, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, dropout=dropout)
         # else:
+        if not isinstance(alpha, torch.Tensor) and alpha is not None:
+            alpha = torch.Tensor(alpha)
         self.model = Classifier(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, focal=focal,
-                                dropout=dropout, batchnorm=batchnorm)
+                                alpha=alpha, dropout=dropout, batchnorm=batchnorm)
         self.model = torch.compile(self.model)
         self.lr = lr
         self.train_preds, self.val_preds, self.test_preds = [], [], []
@@ -338,13 +343,13 @@ class ClassifierLit(LightningModule):
         y_pred = self(x)
 
         label_y = torch.argmax(y, dim=-1)
-        label_loss = self.model.loss(y_pred, label_y)
+        label_loss = self.model.loss(y_pred, label_y, loss_type="cross_entropy" if self.focal else None)
         self.log(f"{stage}/label_loss", label_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
-        if not self.focal:
-            soft_y = torch.exp(y) / torch.sum(torch.exp(y), dim=-1, keepdim=True)
-            soft_loss = self.model.loss(y_pred, soft_y)
-            self.log(f"{stage}/soft_loss", soft_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        # soft_y = torch.exp(y) / torch.sum(torch.exp(y), dim=-1, keepdim=True)
+        soft_y = torch.exp(y)
+        soft_loss = self.model.loss(y_pred, soft_y)
+        self.log(f"{stage}/soft_loss", soft_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
         loss = soft_loss if self.soft else label_loss
         preds = torch.argmax(y_pred, dim=-1)

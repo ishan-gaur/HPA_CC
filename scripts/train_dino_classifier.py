@@ -19,7 +19,7 @@ config_env()
 args = get_args()
 
 focal = True
-soft = False
+soft = True
 HPA = True # use HPA DINO embedding or normal
 ref_concat = True
 if not HPA:
@@ -32,11 +32,12 @@ if ref_concat and not HPA:
 
 NUM_CLASSES = 4
 
-project_name = f"{'hpa_' if HPA else ''}dino_{'soft_' if soft else ''}classifier"
+project_name = f"{'hpa_' if HPA else ''}dino_{'soft_' if soft else ''}{'focal_' if focal else ''}classifier"
 print_with_time(f"Running under project {project_name}, press enter to continue...")
 input()
 
 config = {
+    "alpha": [0.09, 0.26, 0.34, 0.31], # or None
     "batch_size": 64,
     "devices": [0, 1, 2, 3, 4, 5, 6, 7],
     "num_workers": 1,
@@ -63,12 +64,13 @@ fucci_path = Path(args.data_dir)
 dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], HPA, "phase")
 model = ClassifierLit(d_input=DINO_INPUT, d_output=NUM_CLASSES, d_hidden=config["d_hidden"], n_hidden=config["n_hidden"], 
                         dropout=config["dropout"], batchnorm=config["batchnorm"], lr=config["lr"], soft=config["soft"], 
-                        focal=config["focal"])
+                        focal=config["focal"], alpha=config["alpha"])
 
 print_with_time("Setting up trainer...")
 logger = TrainerLogger(model, config, args.name_run, project_name, log_dirs_home)
 trainer = pl.Trainer(
     default_root_dir=logger.lit_dir,
+    # accelerator="cpu",
     accelerator="gpu",
     devices=config["devices"],
     # strategy=DDPStrategy(find_unused_parameters=True),
