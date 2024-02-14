@@ -98,7 +98,7 @@ def sharpness_dry_run(dataset_image_paths, sharpness_threshold, output_dir, cmap
     nrow = int(len(filtered_out_images) ** 0.5)
     save_image_grid(filtered_out_images, output_dir / f"filtered_out_{sharpness_threshold}.png", nrow=nrow, cmaps=cmaps)
 
-def well_fucci_stats(paths, gmnn_idx=2, cdt1_idx=3):
+def new_well_fucci_stats(paths, gmnn_idx=2, cdt1_idx=3):
     image_path, mask_path = paths
     scope_name = image_path.parent.name.split('--')[0]
     sc_images = torch.load(image_path) # Cells x Channels x H x W
@@ -106,6 +106,22 @@ def well_fucci_stats(paths, gmnn_idx=2, cdt1_idx=3):
     nuclei_masks = torch.load(mask_path) # Cells x H x W
     sc_nuclei = sc_images * nuclei_masks[:, None]
     mean_intensities = torch.sum(sc_nuclei, dim=(2, 3)) / torch.sum(nuclei_masks[:, None], dim=(2, 3)) # only calculating for GMNN and CDT1
+    min_nonzero_GMNN = torch.min(mean_intensities[:, 0][mean_intensities[:, 0] > 0])
+    min_nonzero_CDT1 = torch.min(mean_intensities[:, 1][mean_intensities[:, 1] > 0])
+    log_mean_GMNN = torch.log(mean_intensities[:, 0] + min_nonzero_GMNN)
+    log_mean_CDT1 = torch.log(mean_intensities[:, 1] + min_nonzero_CDT1)
+    log_mean_fucci_intensities = torch.stack((log_mean_GMNN, log_mean_CDT1), dim=1)
+    fucci_time, raw_time, well_std_int = intensities_to_pseudotime(log_mean_fucci_intensities.numpy())
+    raw_time = raw_time * 2 * np.pi - np.pi
+    return scope_name, len(sc_images), log_mean_fucci_intensities, well_std_int, fucci_time, raw_time
+
+def well_fucci_stats(paths, gmnn_idx=2, cdt1_idx=3):
+    image_path, mask_path = paths
+    scope_name = image_path.parent.name.split('--')[0]
+    sc_images = torch.load(image_path) # Cells x Channels x H x W
+    nuclei_masks = torch.load(mask_path) # Cells x H x W
+    sc_nuclei = sc_images * nuclei_masks[:, None]
+    mean_intensities = torch.sum(sc_nuclei[:, 2:], dim=(2, 3)) / torch.sum(nuclei_masks[:, None], dim=(2, 3)) # only calculating for GMNN and CDT1
     min_nonzero_GMNN = torch.min(mean_intensities[:, 0][mean_intensities[:, 0] > 0])
     min_nonzero_CDT1 = torch.min(mean_intensities[:, 1][mean_intensities[:, 1] > 0])
     log_mean_GMNN = torch.log(mean_intensities[:, 0] + min_nonzero_GMNN)

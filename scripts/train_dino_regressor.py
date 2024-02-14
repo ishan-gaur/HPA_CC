@@ -17,6 +17,7 @@ label = "pseudotime" # "angle", "pseudotime", "phase"
 HPA = True # use HPA DINO embedding or normal
 ref_concat = True
 concat_well_stats = False
+reweight = True
 loss_type = "arc" # "reg", "cart", "arc"
 if not HPA:
     DINO_INPUT = DINO.CLS_DIM
@@ -33,7 +34,7 @@ config = {
     "HPA": HPA,
     "concat_well_stats": concat_well_stats, # add intensity stats to the input
     "loss_type": loss_type, # TODO reg above, what is this?
-    "reweight_loss": True, # TODO maybe start without this?
+    "reweight_loss": reweight, # TODO maybe start without this?
     "bins": 6, # How many bins to use for the reweighting
     "batch_size": 64,
     "devices": [0, 1, 2, 3, 4, 5, 6, 7],

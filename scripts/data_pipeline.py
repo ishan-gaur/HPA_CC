@@ -2,7 +2,7 @@ import shutil
 import sys
 import inspect
 import argparse
-import pickle
+import pickle as pkl
 from pathlib import Path
 from importlib import import_module
 from tqdm import tqdm
@@ -157,7 +157,7 @@ DINO_CONFIG = Path.cwd() / "configs" / "dino_config.yaml"
 # GMM_PROBS = DATA_DIR / f"gmm_probs_{args.name}.pt"
 ANGULAR_LABELS = angle_label_name(DATA_DIR, args.name)
 PSEUDOTIME_LABELS = pseudotime_label_name(DATA_DIR, args.name)
-PHASE_LABELS = phase_label_name(DATA_DIR, args.name)
+PHASE_LABELS = phase_label_name(DATA_DIR, args.name, args.scope)
 
 CHANNELS = load_channel_names(DATA_DIR) if config.channels is None else config.channels
 if config.channels is None:
@@ -477,16 +477,38 @@ if args.labels or args.all:
 
         image_paths, cell_mask_paths, nuclei_mask_paths = load_index_paths(NAME_INDEX)
         paths = list(zip(image_paths, nuclei_mask_paths))
+        print(paths)
         with Pool(16) as pool:
             results = list(tqdm(pool.map(well_fucci_stats, paths), total=len(paths), desc="Getting FUCCI Statistics"))
         scope_names, cells_per_well, well_intensities, well_std_int, well_pseudotimes, well_angles = zip(*results)
         std_full_time, std_full_angles, std_full_std_int = intensities_to_pseudotime(np.concatenate(well_std_int), rescale=False, auto_start=True)
 
+        NUM_COMPONENTS, NUM_CLASSES = 7, 4
+
         # Fit the Bayesian GMM to the angular distributions
         if args.scope:
-            NUM_COMPONENTS, NUM_CLASSES = 7, 4
+            scope_names_list = []
+            for scope, n_cell in zip(scope_names, cells_per_well):
+                scope_names_list.extend([scope] * n_cell)
+            # these are set in the pseudotime_labels.ipynb notebook at the botoom
+            scope_gmms = pkl.load(open(OUTPUT_DIR / "scope_gmms.pkl", "rb"))
+            groupings = pkl.load(open(OUTPUT_DIR / "groupings.pkl", "rb"))
+            from HPA_CC.utils.pseudotime import comp_to_class
+
+            class_likelihoods = []
+            for i, (scope, angle) in tqdm(enumerate(zip(scope_names_list, std_full_angles)), desc="Calculating class likelihoods"):
+                gmm = scope_gmms[scope]
+                group = groupings[scope]
+                sample_class_likelihoods = np.zeros((1, NUM_CLASSES))
+                angles = np.array([angle])
+                likelihoods = gmm._estimate_weighted_log_prob(angles.reshape(-1, 1))
+                for comp in range(gmm.n_components):
+                    cell_idx = sample_class_likelihoods[:, comp_to_class(comp, gmm, group)]
+                    sample_class_likelihoods[:, comp_to_class(comp, gmm, group)] = np.log(np.exp(cell_idx) + np.exp(likelihoods[:, comp]))
+                class_likelihoods.append(sample_class_likelihoods)
+            class_likelihoods = np.concatenate(class_likelihoods)
+            print(class_likelihoods.shape)
         else:
-            NUM_COMPONENTS, NUM_CLASSES = 7, 4
             gmm = BayesianGaussianMixture(n_components=7, covariance_type='full', n_init=10)
             gmm.fit(std_full_angles.reshape(-1, 1))
 
@@ -499,26 +521,30 @@ if args.labels or args.all:
             class_likelihoods = np.zeros((len(std_full_std_int), NUM_CLASSES))
             likelihoods = gmm._estimate_weighted_log_prob(std_full_angles.reshape(-1, 1))
             for comp in range(gmm.n_components):
-                p = class_likelihoods[:, full_comp_to_class(comp)]
-                class_likelihoods[:, full_comp_to_class(comp)] = np.log(np.exp(p) + np.exp(likelihoods[:, comp]))
-            pseudotime_class = np.argmax(class_likelihoods, axis=1)
+                cell_idx = class_likelihoods[:, full_comp_to_class(comp)]
+                class_likelihoods[:, full_comp_to_class(comp)] = np.log(np.exp(cell_idx) + np.exp(likelihoods[:, comp]))
+        
+        pseudotime_class = np.argmax(class_likelihoods, axis=1)
 
-            torch.save(torch.tensor(std_full_angles), ANGULAR_LABELS) # [0, 1]
-            torch.save(torch.tensor(std_full_time), PSEUDOTIME_LABELS) # [0, 1]
-            torch.save(torch.tensor(class_likelihoods), PHASE_LABELS) # shape (n_samples, 4), likelihoods of each class
-
+        torch.save(torch.tensor(std_full_angles), ANGULAR_LABELS) # [0, 1]
+        torch.save(torch.tensor(std_full_time), PSEUDOTIME_LABELS) # [0, 1]
+        torch.save(torch.tensor(class_likelihoods), PHASE_LABELS) # shape (n_samples, 4), likelihoods of each class
+        
         n_cols = 12
         n_wells = len(well_angles)
         n_rows = n_wells // n_cols + 1
+        color_map = {0: 'darkred', 1: 'red', 2: 'orange', 3: 'green'}
         plt.clf()
-        fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * 4, n_rows * 4))
-        p = 0
-        for i, (well_angle, well_std_int) in enumerate(zip(well_angles, well_std_int)):
-            ps_class = pseudotime_class[p:p + len(well_angle)]
-            p += len(well_angle)
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * 4, n_rows * 4), sharex=True, sharey=True)
+        cell_idx = 0
+        for i, (well_path, n_cells, well_angle, intensities) in enumerate(zip(paths, cells_per_well, well_angles, well_std_int)):
+            well = well_path[0].parent.name
+            ps_class = pseudotime_class[cell_idx:cell_idx + n_cells]
+            cell_idx += n_cells
+            colors = [color_map[c] for c in ps_class]
             ax = axs[i // n_cols, i % n_cols]
-            ax.set_title(f"Well {i}")
-            ax.scatter(x=well_std_int[:, 0], y=well_std_int[:, 1], c=ps_class, cmap='RdYlGn')
+            ax.set_title(f"{well} n={n_cells}")
+            ax.scatter(intensities[:, 0], intensities[:, 1], c=colors)
         plt.savefig(OUTPUT_DIR / f"well_pseudotime_labels_{args.name}.png")
         plt.close()
         

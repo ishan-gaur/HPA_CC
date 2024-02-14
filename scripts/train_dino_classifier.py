@@ -19,8 +19,9 @@ config_env()
 args = get_args()
 
 focal = True
-soft = True
+soft = False
 HPA = True # use HPA DINO embedding or normal
+scope = True
 ref_concat = True
 if not HPA:
     DINO_INPUT = DINO.CLS_DIM
@@ -32,12 +33,12 @@ if ref_concat and not HPA:
 
 NUM_CLASSES = 4
 
-project_name = f"{'hpa_' if HPA else ''}dino_{'soft_' if soft else ''}{'focal_' if focal else ''}classifier"
+project_name = f"{'hpa_' if HPA else ''}dino_{'soft_' if soft else ''}{'focal_' if focal else ''}{'scope_' if scope else ''}classifier"
 print_with_time(f"Running under project {project_name}, press enter to continue...")
 input()
 
 config = {
-    "alpha": [0.09, 0.26, 0.34, 0.31], # or None
+    "alpha": None,
     "batch_size": 64,
     "devices": [0, 1, 2, 3, 4, 5, 6, 7],
     "num_workers": 1,
@@ -46,6 +47,7 @@ config = {
     "epochs": args.epochs,
     "soft": soft,
     "focal": focal,
+    "scope": scope,
     "n_hidden": 0,
     "d_hidden": DINO.CLS_DIM * 2,
     # "dropout": (0.8, 0.5, 0.2)
@@ -61,10 +63,18 @@ config = {
 
 print_with_time("Setting up data module...")
 fucci_path = Path(args.data_dir)
-dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], HPA, "phase")
-model = ClassifierLit(d_input=DINO_INPUT, d_output=NUM_CLASSES, d_hidden=config["d_hidden"], n_hidden=config["n_hidden"], 
-                        dropout=config["dropout"], batchnorm=config["batchnorm"], lr=config["lr"], soft=config["soft"], 
-                        focal=config["focal"], alpha=config["alpha"])
+dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], HPA, "phase", scope=scope)
+if args.checkpoint is not None:
+    checkpoint_file = find_checkpoint_file(args.checkpoint, log_dirs_home, args.best)
+    print_with_time(f"Loading checkpoint from {checkpoint_file}")
+    model = ClassifierLit.load_from_checkpoint(checkpoint_file)
+else:
+    print("Training from scratch")
+    model = ClassifierLit(d_input=DINO_INPUT, d_output=NUM_CLASSES, d_hidden=config["d_hidden"], n_hidden=config["n_hidden"], 
+                            dropout=config["dropout"], batchnorm=config["batchnorm"], lr=config["lr"], soft=config["soft"], 
+                            focal=config["focal"], alpha=config["alpha"])
+model.lr = config["lr"]
+model.loss_type = config["loss_type"]
 
 print_with_time("Setting up trainer...")
 logger = TrainerLogger(model, config, args.name_run, project_name, log_dirs_home)

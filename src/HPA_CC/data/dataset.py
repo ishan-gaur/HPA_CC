@@ -183,7 +183,7 @@ class RefCLSDM(LightningDataModule):
     Data module for training a classifier on top of DINO embeddings of DAPI+TUBL reference channels
     Trying to match labels from a GMM or Ward cluster labeling algorithm of the FUCCI channel intensities
     """
-    def __init__(self, data_dir, data_name, batch_size, num_workers, split, hpa, label, dataset=None, concat_well_stats=False, seed=42):
+    def __init__(self, data_dir, data_name, batch_size, num_workers, split, hpa, label, scope=None, concat_well_stats=False, seed=42):
         super().__init__()
         self.data_dir = data_dir
         self.data_name = data_name
@@ -191,7 +191,8 @@ class RefCLSDM(LightningDataModule):
         self.num_workers = num_workers
         self.split = split
 
-        self.dataset = RefClsPseudo(self.data_dir, self.data_name, hpa, label, concat_well_stats=concat_well_stats, dataset=dataset)
+        self.dataset = RefClsPseudo(self.data_dir, self.data_name, hpa, label, scope=scope, 
+                                    concat_well_stats=concat_well_stats)
         generator = torch.Generator().manual_seed(seed)
         self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=generator)
         self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
@@ -213,9 +214,7 @@ class RefClsPseudo(Dataset):
     Needs to handle whether or not to concatenate well intensity statistics onto the embeddings
     Needs to be able to read out each microscope in the data
     """
-    def __init__(self, data_dir, data_name, hpa, label, concat_well_stats=False, dataset=None):
-        assert label in RefClsPseudo.label_types(), f"Invalid label type, must be in {RefClsPseudo.label_types()}"
-
+    def __init__(self, data_dir, data_name, hpa, label, scope=None, concat_well_stats=False):
         # TODO support for the dataset name
         cls_file = cls_embedding_name(data_dir, data_name, hpa=hpa)
         print(f"Loading {cls_file}")
@@ -227,14 +226,7 @@ class RefClsPseudo(Dataset):
             print("X shape:", self.X.shape)
             self.X = torch.cat((self.X, self.well_stats), dim=1)
 
-        if label == "angle":
-            label_file = angle_label_name(data_dir, data_name)
-        elif label == "pseudotime":
-            label_file = pseudotime_label_name(data_dir, data_name)
-        elif label == "phase":
-            label_file = phase_label_name(data_dir, data_name)
-        print(f"Loading {label_file}")
-        self.Y = torch.load(label_file)
+        self.Y = load_labels(label, data_dir, data_name, scope=scope)
         print(self.Y.min(), self.Y.max())
 
         self.X, self.Y = self.X.float(), self.Y.float()
@@ -247,8 +239,6 @@ class RefClsPseudo(Dataset):
     def __len__(self):
         return len(self.X)
 
-    def label_types():
-        return ["angle", "pseudotime", "phase"]
 
 def intensity_data_name(data_dir, data_name):
     return data_dir / f"intensity_distributions_{data_name}.pt"
@@ -262,5 +252,60 @@ def angle_label_name(data_dir, data_name):
 def pseudotime_label_name(data_dir, data_name):
     return data_dir / f"{data_name}_sample_pseudotime.pt"
 
-def phase_label_name(data_dir, data_name):
-    return data_dir / f"{data_name}_sample_phase.pt"
+def phase_label_name(data_dir, data_name, scope):
+    return data_dir / f"{data_name}_sample_phase{'_scope' if scope else ''}.pt"
+
+
+def load_labels(label, data_dir, data_name, scope=None):
+    label_types = ["angle", "pseudotime", "phase"]
+    assert label in label_types, f"Invalid label type, must be in {label_types}"
+    if label == "angle":
+        label_file = angle_label_name(data_dir, data_name)
+    elif label == "pseudotime":
+        label_file = pseudotime_label_name(data_dir, data_name)
+    elif label == "phase":
+        if scope is None:
+            raise ValueError("Must provide boolean scope flag for phase label")
+        label_file = phase_label_name(data_dir, data_name, scope)
+    print(f"Loading {label_file}")
+    Y = torch.load(label_file)
+    return Y
+
+class RefImPseudo(Dataset):
+    def __init__(self, data_dir, data_name, label, scope=None):
+        self.X = CellImageDataset(data_dir / f"index_{data_name}.csv", channels=[0, 1])[:]
+        self.Y = load_labels(label, data_dir, data_name, scope=scope)
+        print("X shape:", self.X.shape)
+        print("Y shape:", self.Y.shape)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.Y[idx]
+
+    def __len__(self):
+        return len(self.X)
+
+class RefImPseudoDM(LightningDataModule):
+    def __init__(self, data_dir, data_name, batch_size, num_workers, split, label, scope=None, seed=42):
+        super().__init__()
+        self.data_dir = data_dir
+        self.data_name = data_name
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.split = split
+
+        self.dataset = RefImPseudo(self.data_dir, self.data_name, label, scope=scope)
+        generator = torch.Generator().manual_seed(seed)
+        self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=generator)
+        self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
+
+    def __shared_dataloader(self, dataset, shuffle=False):
+        return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, shuffle=shuffle)
+
+    def train_dataloader(self):
+        return self.__shared_dataloader(self.train_dataset, shuffle=True)
+    
+    def val_dataloader(self):
+        return self.__shared_dataloader(self.val_dataset)
+    
+    def test_dataloader(self):
+        return self.__shared_dataloader(self.test_dataset)

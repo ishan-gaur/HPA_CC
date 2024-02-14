@@ -141,3 +141,10 @@ def calc_R(xc, yc, x, y):
     """Calculate the distance of each 2D points from the center (xc, yc)"""
     return np.sqrt((x - xc) ** 2 + (y - yc) ** 2)
 
+def comp_to_class(comp, gmm, grouping):
+    # comp is the GMM component number
+    # grouping is a list of the class numbers for each component sorted by mean
+    mean_ordered_comps = list(np.argsort(gmm.means_.flatten()))
+    comp_pos = mean_ordered_comps.index(comp)
+    comp_class = grouping[comp_pos]
+    return comp_class

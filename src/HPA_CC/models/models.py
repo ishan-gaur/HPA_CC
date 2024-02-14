@@ -1,6 +1,8 @@
+import math
 import torch
 from torch import nn
 from HPA_CC.models.utils import FocalLoss
+from HPA_CC.models.densenet import DenseNet264
 
 class PseudoRegressor(nn.Module):
     """
@@ -135,11 +137,28 @@ class Classifier(nn.Module):
         self.loss_fn = nn.CrossEntropyLoss() if not focal else FocalLoss(alpha=alpha)
 
     def forward(self, x):
+        print(x.shape)
+        exit()
         return self.model(x)
 
     def loss(self, x, y, loss_type=None):
-        # if self.focal and y.ndim > 1:
-        #     y = y.argmax(dim=-1)
+        # x is the output of the model, y is the target
+        # x is NOT the INPUT to the model
+        if loss_type == "cross_entropy":
+            x = nn.Softmax(dim=-1)(x)
+            return nn.CrossEntropyLoss()(x, y)
+        return self.loss_fn(x, y)
+
+class ConvClassifier(nn.Module):
+    def __init__(self, focal: bool = True, alpha = None):
+        super().__init__()
+        self.model = DenseNet264()
+        self.loss_fn = nn.CrossEntropyLoss() if not focal else FocalLoss(alpha=alpha)
+
+    def forward(self, x):
+        return self.model(x)
+
+    def loss(self, x, y, loss_type=None):
         if loss_type == "cross_entropy":
             x = nn.Softmax(dim=-1)(x)
             return nn.CrossEntropyLoss()(x, y)

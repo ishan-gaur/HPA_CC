@@ -6,7 +6,7 @@ from glob import glob
 from pathlib import Path
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
-from HPA_CC.models.models import PseudoRegressor, Classifier
+from HPA_CC.models.models import PseudoRegressor, Classifier, ConvClassifier
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
@@ -218,7 +218,8 @@ class PseudoRegressorLit(LightningModule):
         cm = confusion_matrix(binned_labels, binned_preds)
         # normalize the rows
         # cm = cm / cm.sum(axis=1, keepdims=True)
-        cm = cm / cm.sum()
+        cm = cm / cm.sum(axis=0, keepdims=True)
+        # cm = cm / cm.sum()
         # print(cm)
         # ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels))
         plt.clf()
@@ -251,7 +252,8 @@ class PseudoRegressorLit(LightningModule):
         cm = confusion_matrix(binned_labels, binned_preds)
         # normalize the rows
         # cm = cm / cm.sum(axis=1, keepdims=True)
-        cm = cm / cm.sum()
+        cm = cm / cm.sum(axis=0, keepdims=True)
+        # cm = cm / cm.sum()
         # print(cm)
         plt.clf()
         # ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels))
@@ -299,13 +301,10 @@ class PseudoRegressorLit(LightningModule):
 
 class ClassifierLit(LightningModule):
     def __init__(self,
-        # conv: bool = False,
+        conv: bool = False,
         d_input: int = 1024,
         d_hidden = None,
         n_hidden: int = 0,
-        # imsize: int = 256,
-        # nc: int = 2,
-        # nf: int = 64,
         d_output: int = 3,
         lr: float = 5e-5,
         soft: bool = False,
@@ -318,14 +317,14 @@ class ClassifierLit(LightningModule):
         if d_hidden is None:
             d_hidden = d_input
         self.save_hyperparameters()
-        # if conv:
-        #     self.model = ConvClassifier(imsize=imsize, nc=nc, nf=nf, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, dropout=dropout)
-        # else:
         if not isinstance(alpha, torch.Tensor) and alpha is not None:
             alpha = torch.Tensor(alpha)
-        self.model = Classifier(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, focal=focal,
-                                alpha=alpha, dropout=dropout, batchnorm=batchnorm)
-        self.model = torch.compile(self.model)
+        if conv:
+            self.model = ConvClassifier(focal=focal, alpha=alpha)
+        else:
+            self.model = Classifier(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, focal=focal,
+                                    alpha=alpha, dropout=dropout, batchnorm=batchnorm)
+        # self.model = torch.compile(self.model)
         self.lr = lr
         self.train_preds, self.val_preds, self.test_preds = [], [], []
         self.train_labels, self.val_labels, self.test_labels = [], [], []
