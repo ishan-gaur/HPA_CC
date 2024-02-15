@@ -42,7 +42,7 @@ class TrainerLogger:
             save_dir=wandb_dir,
             config=config
         )
-        # self.wandb_log.watch(model, log="all", log_freq=10)
+        self.wandb_log.watch(model, log="all", log_freq=10)
 
 
         val_checkpoint_callback = ModelCheckpoint(
@@ -320,7 +320,7 @@ class ClassifierLit(LightningModule):
         if not isinstance(alpha, torch.Tensor) and alpha is not None:
             alpha = torch.Tensor(alpha)
         if conv:
-            self.model = ConvClassifier(focal=focal, alpha=alpha)
+            self.model = ConvClassifier(focal=focal, alpha=alpha, d_output=d_output)
         else:
             self.model = Classifier(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, focal=focal,
                                     alpha=alpha, dropout=dropout, batchnorm=batchnorm)
@@ -354,7 +354,7 @@ class ClassifierLit(LightningModule):
         preds = torch.argmax(y_pred, dim=-1)
         labels = label_y
 
-        preds, labels = preds.cpu().numpy(), labels.cpu().numpy()
+        preds, labels = preds.detach().cpu().numpy(), labels.detach().cpu().numpy()
         self.log(f"{stage}/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
         return loss, preds, labels
@@ -368,7 +368,11 @@ class ClassifierLit(LightningModule):
         elif self.num_classes == 4:
             classes = ["M-G1", "G1", "S-G2", "G2"]
         preds, labels = np.concatenate(preds), np.concatenate(labels)
+        filler = np.arange(self.num_classes)
+        preds = np.concatenate((preds, filler))
+        labels = np.concatenate((labels, filler))
         cm = confusion_matrix(labels, preds)
+        cm = cm - np.identity(self.num_classes)
         # ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels))
         ax = sns.heatmap(cm.astype(np.int32), annot=True, fmt="d", vmin=0, vmax=len(labels) / 3)
         ax.set_xlabel("Predicted")
@@ -381,7 +385,7 @@ class ClassifierLit(LightningModule):
         })
 
         for i, class_name in enumerate(classes):
-            self.log(f"{stage}/accuracy_{class_name}", cm[i, i] / np.sum(cm[i]), on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+            self.log(f"{stage}/accuracy_{class_name}", cm[i, i] / np.sum(cm[i]) if np.sum(cm[i]) > 0 else 0, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
     def training_step(self, batch, batch_idx):
         loss, preds, labels = self.__shared_step(batch, batch_idx, "train")

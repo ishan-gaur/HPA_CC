@@ -2,7 +2,7 @@ import math
 import torch
 from torch import nn
 from HPA_CC.models.utils import FocalLoss
-from HPA_CC.models.densenet import DenseNet264
+from HPA_CC.models.densenet import DenseNet
 
 class PseudoRegressor(nn.Module):
     """
@@ -150,9 +150,11 @@ class Classifier(nn.Module):
         return self.loss_fn(x, y)
 
 class ConvClassifier(nn.Module):
-    def __init__(self, focal: bool = True, alpha = None):
+    def __init__(self, focal: bool = True, alpha = None, d_output: int = 3):
         super().__init__()
-        self.model = DenseNet264()
+        # self.model = DenseNetHPA(d_output=d_output)
+        self.model = DenseNet(block_config=(6, 12, 32, 24), growth_rate=32,
+            num_classes=4, n_input_channels=2, small_inputs=False, efficient=True)
         self.loss_fn = nn.CrossEntropyLoss() if not focal else FocalLoss(alpha=alpha)
 
     def forward(self, x):

@@ -11,6 +11,7 @@ log_dirs_home = Path("/data/ishang/pseudotime_pred/")
 config_env()
 args = get_args()
 
+NUM_CLASSES = 4
 scope = False
 loss_type = "arc" # "reg", "cart", "arc"
 project_name = f"conv_{'scope_' if scope else ''}classifier"
@@ -20,14 +21,16 @@ input()
 config = {
     "alpha": None, # to reweight the focal loss terms per class
     "loss_type": loss_type, # TODO reg above, what is this?
-    "batch_size": 8,
+    "batch_size": 32,
     # "devices": [0, 1, 2, 3, 4, 5, 6, 7],
+    # "devices": [2, 3, 4, 5, 6, 7],
     "devices": [0],
-    "num_workers": 1,
+    "num_workers": 8,
     "split": (0.64, 0.16, 0.2), # TODO need to make this so that you send the split per subset and print the actual split and log later
     "lr": 1e-5,
     "gradient_clip_val": 5e5,
     "epochs": args.epochs,
+    "num_classes": NUM_CLASSES,
 }
 
 
@@ -46,10 +49,13 @@ if args.checkpoint is not None:
     model = ClassifierLit.load_from_checkpoint(checkpoint_file)
 else:
     print("Training from scratch")
-    model = ClassifierLit(focal=True, alpha=config["alpha"], conv=True)
+    model = ClassifierLit(focal=True, alpha=config["alpha"], conv=True, d_output=config["num_classes"])
 
 model.lr = config["lr"]
 model.loss_type = config["loss_type"]
+
+# from torchinfo import summary
+# print(summary(model, (config["batch_size"], 2, 512, 512)))
 
 ##########################################################################################
 # Train and test

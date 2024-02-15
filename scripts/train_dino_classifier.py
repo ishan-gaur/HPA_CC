@@ -1,16 +1,10 @@
-import sys
-import os
-import time
 from pathlib import Path
-import argparse
-from importlib import import_module
-
-import torch
 import lightning.pytorch as pl
 from HPA_CC.models.train import config_env, get_args, TrainerLogger, find_checkpoint_file, print_with_time
 from HPA_CC.models.train import ClassifierLit
 from HPA_CC.models.dino import DINO, DINO_HPA
 from HPA_CC.data.dataset import RefCLSDM
+from HPA_CC.data.well_normalization import buckets
 
 
 log_dirs_home = Path("/data/ishang/pseudotime_pred/")
@@ -23,10 +17,13 @@ soft = False
 HPA = True # use HPA DINO embedding or normal
 scope = True
 ref_concat = True
+concat_well_stats = True
 if not HPA:
     DINO_INPUT = DINO.CLS_DIM
 else:
     DINO_INPUT = DINO_HPA.CLS_DIM if not ref_concat else DINO_HPA.CONCAT_CLS_DIM
+if concat_well_stats:
+    DINO_INPUT += 2 * buckets
 
 if ref_concat and not HPA:
     raise ValueError("Can't use ref concat without HPA")
@@ -39,6 +36,7 @@ input()
 
 config = {
     "alpha": None,
+    "concat_well_stats": concat_well_stats, # add intensity stats to the input
     "batch_size": 64,
     "devices": [0, 1, 2, 3, 4, 5, 6, 7],
     "num_workers": 1,
@@ -53,7 +51,8 @@ config = {
     # "dropout": (0.8, 0.5, 0.2)
     "dropout": False,
     "batchnorm": False,
-    "num_classes": NUM_CLASSES
+    "num_classes": NUM_CLASSES,
+    "HPA": HPA,
 }
 
 
@@ -63,7 +62,8 @@ config = {
 
 print_with_time("Setting up data module...")
 fucci_path = Path(args.data_dir)
-dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], HPA, "phase", scope=scope)
+dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], config["HPA"],
+              label="phase", scope=scope, concat_well_stats=config["concat_well_stats"])
 if args.checkpoint is not None:
     checkpoint_file = find_checkpoint_file(args.checkpoint, log_dirs_home, args.best)
     print_with_time(f"Loading checkpoint from {checkpoint_file}")
