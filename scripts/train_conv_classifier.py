@@ -2,7 +2,7 @@ from pathlib import Path
 import lightning.pytorch as pl
 from HPA_CC.models.train import config_env, get_args, TrainerLogger, find_checkpoint_file, print_with_time
 from HPA_CC.models.train import ClassifierLit
-from HPA_CC.data.dataset import RefImPseudoDM
+from HPA_CC.data.dataset import RefImDM
 from HPA_CC.data.well_normalization import buckets
 from HPA_CC.models.dino import DINO, DINO_HPA
 
@@ -13,14 +13,12 @@ args = get_args()
 
 NUM_CLASSES = 4
 scope = False
-loss_type = "arc" # "reg", "cart", "arc"
 project_name = f"conv_{'scope_' if scope else ''}classifier"
 print_with_time(f"Running under project {project_name}, press enter to continue...")
 input()
 
 config = {
     "alpha": None, # to reweight the focal loss terms per class
-    "loss_type": loss_type, # TODO reg above, what is this?
     "batch_size": 32,
     # "devices": [0, 1, 2, 3, 4, 5, 6, 7],
     # "devices": [2, 3, 4, 5, 6, 7],
@@ -41,7 +39,7 @@ config = {
 print_with_time("Setting up model and data module...")
 
 fucci_path = Path(args.data_dir)
-dm = RefImPseudoDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], label="phase", scope=scope)
+dm = RefImDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], label="phase", scope=scope)
 
 if args.checkpoint is not None:
     checkpoint_file = find_checkpoint_file(args.checkpoint, log_dirs_home, args.best)
@@ -52,7 +50,6 @@ else:
     model = ClassifierLit(focal=True, alpha=config["alpha"], conv=True, d_output=config["num_classes"])
 
 model.lr = config["lr"]
-model.loss_type = config["loss_type"]
 
 # from torchinfo import summary
 # print(summary(model, (config["batch_size"], 2, 512, 512)))

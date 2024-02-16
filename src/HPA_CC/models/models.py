@@ -137,8 +137,6 @@ class Classifier(nn.Module):
         self.loss_fn = nn.CrossEntropyLoss() if not focal else FocalLoss(alpha=alpha)
 
     def forward(self, x):
-        print(x.shape)
-        exit()
         return self.model(x)
 
     def loss(self, x, y, loss_type=None):

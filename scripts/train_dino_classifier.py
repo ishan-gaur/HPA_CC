@@ -13,7 +13,7 @@ config_env()
 args = get_args()
 
 focal = True
-soft = False
+soft = True
 HPA = True # use HPA DINO embedding or normal
 scope = True
 ref_concat = True
@@ -30,7 +30,7 @@ if ref_concat and not HPA:
 
 NUM_CLASSES = 4
 
-project_name = f"{'hpa_' if HPA else ''}dino_{'soft_' if soft else ''}{'focal_' if focal else ''}{'scope_' if scope else ''}classifier"
+project_name = f"{'hpa_' if HPA else ''}dino_{'int_' if concat_well_stats else ''}{'soft_' if soft else ''}{'focal_' if focal else ''}{'scope_' if scope else ''}classifier"
 print_with_time(f"Running under project {project_name}, press enter to continue...")
 input()
 
@@ -74,7 +74,6 @@ else:
                             dropout=config["dropout"], batchnorm=config["batchnorm"], lr=config["lr"], soft=config["soft"], 
                             focal=config["focal"], alpha=config["alpha"])
 model.lr = config["lr"]
-model.loss_type = config["loss_type"]
 
 print_with_time("Setting up trainer...")
 logger = TrainerLogger(model, config, args.name_run, project_name, log_dirs_home)

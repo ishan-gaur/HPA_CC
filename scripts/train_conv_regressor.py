@@ -2,7 +2,7 @@ from pathlib import Path
 import lightning.pytorch as pl
 from HPA_CC.models.train import config_env, get_args, TrainerLogger, find_checkpoint_file, print_with_time
 from HPA_CC.models.train import PseudoRegressorLit
-from HPA_CC.data.dataset import RefImPseudoDM
+from HPA_CC.data.dataset import RefImDM
 from HPA_CC.data.well_normalization import buckets
 from HPA_CC.models.dino import DINO, DINO_HPA
 
@@ -45,7 +45,7 @@ config = {
 print_with_time("Setting up model and data module...")
 
 fucci_path = Path(args.data_dir)
-dm = RefImPseudoDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], label=label)
+dm = RefImDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], config["split"], label=label)
 
 if args.checkpoint is not None:
     checkpoint_file = find_checkpoint_file(args.checkpoint, log_dirs_home, args.best)

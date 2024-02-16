@@ -284,7 +284,7 @@ class RefImPseudo(Dataset):
     def __len__(self):
         return len(self.X)
 
-class RefImPseudoDM(LightningDataModule):
+class RefImDM(LightningDataModule):
     def __init__(self, data_dir, data_name, batch_size, num_workers, split, label, scope=None, seed=42):
         super().__init__()
         self.data_dir = data_dir
