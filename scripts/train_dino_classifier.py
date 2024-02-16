@@ -15,7 +15,7 @@ args = get_args()
 focal = True
 soft = True
 HPA = True # use HPA DINO embedding or normal
-scope = True
+scope = False
 ref_concat = True
 concat_well_stats = True
 if not HPA:
