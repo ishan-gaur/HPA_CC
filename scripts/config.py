@@ -1,4 +1,5 @@
 from pathlib import Path
+HOME = Path('/home/ishang/HPA_CC/')
 FUCCI_DS_PATH = Path('/data/ishang/FUCCI-dataset-well')
 # FUCCI_NAME = "unnormalize_1250_sharp_512_crop_og_res"
 # FUCCI_NAME = "minimal_512"
