@@ -197,17 +197,17 @@ class RefCLSDM(LightningDataModule):
         self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=generator)
         self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
 
-    def __shared_dataloader(self, dataset, shuffle=False):
+    def shared_dataloader(self, dataset, shuffle=False):
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, shuffle=shuffle)
 
     def train_dataloader(self):
-        return self.__shared_dataloader(self.train_dataset, shuffle=True)
+        return self.shared_dataloader(self.train_dataset, shuffle=True)
     
     def val_dataloader(self):
-        return self.__shared_dataloader(self.val_dataset)
+        return self.shared_dataloader(self.val_dataset)
     
     def test_dataloader(self):
-        return self.__shared_dataloader(self.test_dataset)
+        return self.shared_dataloader(self.test_dataset)
 
 class RefClsPseudo(Dataset):
     """
@@ -254,6 +254,9 @@ def pseudotime_label_name(data_dir, data_name):
 
 def phase_label_name(data_dir, data_name, scope):
     return data_dir / f"{data_name}_sample_phase{'_scope' if scope else ''}.pt"
+
+def intensity_name(data_dir, data_name):
+    return data_dir / f"{data_name}_intensity.npy"
 
 
 def load_labels(label, data_dir, data_name, scope=None):

@@ -67,6 +67,7 @@ def calculate_pseudotime(pol_data, centered_data, save_dir="", auto_start=False)
     else:
         bins = plt.hist(pol_sort_theta, 150)
         start_theta = bins[1][np.argmin(bins[0])]
+        plt.clf()
         
     # Move those points to the other side
     more_than_start = np.greater(pol_sort_theta, start_theta)
@@ -101,7 +102,7 @@ def calculate_pseudotime(pol_data, centered_data, save_dir="", auto_start=False)
     raw_time = raw_time[pol_unsort]
     return fucci_time, raw_time
 
-def stretch_time(time_data,nbins=1000):
+def stretch_time(time_data, nbins=1000):
     # This function creates a uniform across pseudotime
     n, bins, patches = plt.hist(time_data, histedges_equalN(time_data, nbins), density=True)
     tmp_time_data = deepcopy(time_data)

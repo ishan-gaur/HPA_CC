@@ -1,5 +1,6 @@
-import numpy as np
+import cv2
 import torch
+import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -179,3 +180,19 @@ def plots_to_fig_grid(plot_figs):
         # ax.set_aspect('equal')
         ax.axis("off")
     plt.show()
+
+def annotate_cell_image(rgb_image, masks, pseudotimes, phases):
+    # image = cv2.imread(image_path)
+    image = rgb_image
+    for mask, time, phase in zip(masks, pseudotimes, phases):
+        # Draw the bounding box on the image
+        min_x = np.min(np.where(mask)[1])
+        max_x = np.max(np.where(mask)[1])
+        min_y = np.min(np.where(mask)[0])
+        max_y = np.max(np.where(mask)[0])
+        cv2.rectangle(image, (min_x, min_y), (max_x, max_y), (0, 255, 0), 2)
+
+        # Annotate with the classification score
+        text = f"{time}: {phase:.2f}"
+        cv2.putText(image, text, (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    return image

@@ -8,7 +8,7 @@ from importlib import import_module
 from tqdm import tqdm
 
 from HPA_CC.data.dataset import CellImageDataset, intensity_data_name, cls_embedding_name
-from HPA_CC.data.dataset import angle_label_name, pseudotime_label_name, phase_label_name
+from HPA_CC.data.dataset import angle_label_name, pseudotime_label_name, phase_label_name, intensity_name
 import HPA_CC.data.pipeline as pipeline
 from HPA_CC.data.pipeline import create_image_paths_file, image_paths_from_folders, create_data_path_index, load_index_paths, load_channel_names, save_channel_names
 from HPA_CC.data.pipeline import segmentator_setup, get_masks, normalize_images, filter_masks_by_sharpness, clean_and_save_masks, crop_images, resize
@@ -158,6 +158,7 @@ DINO_CONFIG = Path.cwd() / "configs" / "dino_config.yaml"
 ANGULAR_LABELS = angle_label_name(DATA_DIR, args.name)
 PSEUDOTIME_LABELS = pseudotime_label_name(DATA_DIR, args.name)
 PHASE_LABELS = phase_label_name(DATA_DIR, args.name, args.scope)
+INTENSITY_DATA = intensity_name(DATA_DIR, args.name)
 
 CHANNELS = load_channel_names(DATA_DIR) if config.channels is None else config.channels
 if config.channels is None:
@@ -526,6 +527,7 @@ if args.labels or args.all:
         
         pseudotime_class = np.argmax(class_likelihoods, axis=1)
 
+        np.save(INTENSITY_DATA, np.concatenate(well_std_int))
         torch.save(torch.tensor(std_full_angles), ANGULAR_LABELS) # [0, 1]
         torch.save(torch.tensor(std_full_time), PSEUDOTIME_LABELS) # [0, 1]
         torch.save(torch.tensor(class_likelihoods), PHASE_LABELS) # shape (n_samples, 4), likelihoods of each class

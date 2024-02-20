@@ -2,6 +2,7 @@ import math
 import torch
 from torch import nn
 from HPA_CC.models.utils import FocalLoss
+from HPA_CC.models.utils import angle_to_pseudo as angle_conversion
 from HPA_CC.models.densenet import DenseNet
 
 class PseudoRegressor(nn.Module):
@@ -51,9 +52,7 @@ class PseudoRegressor(nn.Module):
         # return self.model(x) * 2 * torch.pi
 
     def angle_to_pseudo(angle):
-        mod_angle = angle.remainder(2 * torch.pi)
-        pseudo = mod_angle / (2 * torch.pi)
-        return pseudo
+        return angle_conversion(angle)
 
     def cart_distance(theta_pred, y):
         theta = 2 * torch.pi * y

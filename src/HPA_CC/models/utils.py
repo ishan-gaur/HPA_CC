@@ -140,3 +140,20 @@ def focal_loss(alpha: Optional[Sequence] = None,
         reduction=reduction,
         ignore_index=ignore_index)
     return fl
+
+def angle_to_pseudo(angle):
+    mod_angle = angle.remainder(2 * torch.pi)
+    pseudo = mod_angle / (2 * torch.pi)
+    return pseudo
+
+def regressor_inference(model, dataloader, device="cuda:0"):
+    preds_list = []
+    with torch.no_grad():
+        for batch in iter(dataloader):
+            x, y = batch
+            x = x.to(device)
+            pred = model(x)
+            preds_list.append(pred.cpu())
+    preds_test = torch.cat(preds_list, dim=0)
+    std_preds_test = angle_to_pseudo(preds_test).numpy()
+    return std_preds_test.squeeze()
