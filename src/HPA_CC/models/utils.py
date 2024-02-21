@@ -175,5 +175,5 @@ def classifier_inference(model, dataloader, device="cuda:0"):
             pred = model(x)
             preds_list.append(pred.cpu())
     preds_test = torch.cat(preds_list, dim=0)
-    std_preds_test = angle_to_pseudo(preds_test).numpy()
-    return std_preds_test.squeeze()
+    class_preds_test = torch.argmax(preds_test, dim=1).numpy()
+    return class_preds_test.squeeze()
