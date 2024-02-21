@@ -150,7 +150,27 @@ def regressor_inference(model, dataloader, device="cuda:0"):
     preds_list = []
     with torch.no_grad():
         for batch in iter(dataloader):
-            x, y = batch
+            try:
+                x = batch
+            except ValueError:
+                print("Batch is not a tensor, trying to unpack it. Inference mode dataset preferred.")
+                x, y = batch
+            x = x.to(device)
+            pred = model(x)
+            preds_list.append(pred.cpu())
+    preds_test = torch.cat(preds_list, dim=0)
+    std_preds_test = angle_to_pseudo(preds_test).numpy()
+    return std_preds_test.squeeze()
+
+def classifier_inference(model, dataloader, device="cuda:0"):
+    preds_list = []
+    with torch.no_grad():
+        for batch in iter(dataloader):
+            try:
+                x = batch
+            except ValueError:
+                print("Batch is not a tensor, trying to unpack it. Inference mode dataset preferred.")
+                x, y = batch
             x = x.to(device)
             pred = model(x)
             preds_list.append(pred.cpu())

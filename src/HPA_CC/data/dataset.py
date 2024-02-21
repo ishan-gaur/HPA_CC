@@ -183,19 +183,26 @@ class RefCLSDM(LightningDataModule):
     Data module for training a classifier on top of DINO embeddings of DAPI+TUBL reference channels
     Trying to match labels from a GMM or Ward cluster labeling algorithm of the FUCCI channel intensities
     """
-    def __init__(self, data_dir, data_name, batch_size, num_workers, split, hpa, label, scope=None, concat_well_stats=False, seed=42):
+    def __init__(self, data_dir, data_name, batch_size, num_workers, hpa, label, index=None, split=None, scope=None, concat_well_stats=False, seed=42, inference=False):
         super().__init__()
         self.data_dir = data_dir
         self.data_name = data_name
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.split = split
+        self.inference = inference
+
+        if not self.inference and self.split is None:
+            raise ValueError("Must provide split for training")
 
         self.dataset = RefClsPseudo(self.data_dir, self.data_name, hpa, label, scope=scope, 
-                                    concat_well_stats=concat_well_stats)
+                                    concat_well_stats=concat_well_stats, inference=self.inference)
         generator = torch.Generator().manual_seed(seed)
-        self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=generator)
-        self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
+        if self.inference:
+            self.train_dataset, self.val_dataset, self.test_dataset = None, None, None
+        else:
+            self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=generator)
+            self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
 
     def shared_dataloader(self, dataset, shuffle=False):
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, shuffle=shuffle)
@@ -209,13 +216,18 @@ class RefCLSDM(LightningDataModule):
     def test_dataloader(self):
         return self.shared_dataloader(self.test_dataset)
 
+    def inference_dataloader(self):
+        return self.shared_dataloader(self.dataset)
+
 class RefClsPseudo(Dataset):
     """
     Needs to handle whether or not to concatenate well intensity statistics onto the embeddings
     Needs to be able to read out each microscope in the data
     """
-    def __init__(self, data_dir, data_name, hpa, label, scope=None, concat_well_stats=False):
+    def __init__(self, data_dir, data_name, hpa, label, scope=None, concat_well_stats=False, inference=False):
         # TODO support for the dataset name
+        self.inference = inference
+
         cls_file = cls_embedding_name(data_dir, data_name, hpa=hpa)
         print(f"Loading {cls_file}")
         self.X = torch.load(cls_file)
@@ -223,18 +235,23 @@ class RefClsPseudo(Dataset):
             intensity_file = intensity_data_name(data_dir, data_name)
             print(f"Loading {intensity_file}")
             self.well_stats = torch.load(intensity_file)
-            print("X shape:", self.X.shape)
+            print("X shape before intensity stats:", self.X.shape)
             self.X = torch.cat((self.X, self.well_stats), dim=1)
-
-        self.Y = load_labels(label, data_dir, data_name, scope=scope)
-        print(self.Y.min(), self.Y.max())
-
-        self.X, self.Y = self.X.float(), self.Y.float()
+        self.X = self.X.float()
         print("X shape:", self.X.shape)
-        print("Y shape:", self.Y.shape)
+
+        if self.inference:
+            self.Y = None
+        else:
+            self.Y = load_labels(label, data_dir, data_name, scope=scope)
+            self.Y = self.Y.float()
+            print("Y shape:", self.Y.shape)
 
     def __getitem__(self, idx):
-        return self.X[idx], self.Y[idx]
+        if self.inference:
+            return self.X[idx]
+        else:
+            return self.X[idx], self.Y[idx]
 
     def __len__(self):
         return len(self.X)

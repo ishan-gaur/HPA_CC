@@ -87,6 +87,7 @@ def cdf_percentiles(percentiles, values, channel_names, file_path, log=False):
             new_file_path = file_path.parent / (f'{file_path.stem}_{percentile}' + file_path.suffix)
 
 def save_image(image, file_path, cmaps):
+    # takes a torch tensor for the image
     if (image.shape[0] != 1 and image.shape[0] != 3) and cmaps is None:
         raise ValueError("Must specify cmaps if there are multiple channels")
     img = image.float()
@@ -99,6 +100,7 @@ def save_image(image, file_path, cmaps):
     img = Image.fromarray((255 * img[..., :3]).astype(np.uint8))
     img.save(file_path)
     if not silent: print(f"Saved image samples to {file_path}")
+    return img
 
 def save_image_grid(images, file_path, nrow, cmaps=None):
     images = images.float()
