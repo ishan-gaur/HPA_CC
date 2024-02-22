@@ -177,3 +177,26 @@ def classifier_inference(model, dataloader, device="cuda:0"):
     preds_test = torch.cat(preds_list, dim=0)
     class_preds_test = torch.argmax(preds_test, dim=1).numpy()
     return class_preds_test.squeeze()
+
+def combined_inference(model, dataloader, device="cuda:0"):
+    pseudo_list, angle_list, phase_list = [], [], []
+    model.eval()
+    with torch.no_grad():
+        for batch in iter(dataloader):
+            try:
+                x = batch
+            except ValueError:
+                print("Batch is not a tensor, trying to unpack it. Inference mode dataset preferred.")
+                x, y = batch
+            x = x.to(device)
+            pseudo, angle, phase = model(x)
+            pseudo_list.append(pseudo.cpu())
+            angle_list.append(angle.cpu())
+            phase_list.append(phase.cpu())
+    pseudo_preds = torch.cat(pseudo_list, dim=0)
+    pseudo_preds = angle_to_pseudo(pseudo_preds).numpy()
+    angle_preds = torch.cat(angle_list, dim=0)
+    angle_preds = angle_to_pseudo(angle_preds).numpy()
+    phase_preds = torch.cat(phase_list, dim=0)
+    phase_preds = torch.argmax(phase_preds, dim=1).numpy()
+    return pseudo_preds.squeeze(), angle_preds.squeeze(), phase_preds.squeeze()
