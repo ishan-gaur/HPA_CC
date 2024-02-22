@@ -183,7 +183,7 @@ class RefCLSDM(LightningDataModule):
     Data module for training a classifier on top of DINO embeddings of DAPI+TUBL reference channels
     Trying to match labels from a GMM or Ward cluster labeling algorithm of the FUCCI channel intensities
     """
-    def __init__(self, data_dir, data_name, batch_size, num_workers, hpa, label, index=None, split=None, scope=None, concat_well_stats=False, seed=42, inference=False):
+    def __init__(self, data_dir, data_name, batch_size, num_workers, label, index=None, split=None, scope=None, hpa=True, concat_well_stats=False, seed=42, inference=False):
         super().__init__()
         self.data_dir = data_dir
         self.data_name = data_name
@@ -226,6 +226,7 @@ class RefClsPseudo(Dataset):
     """
     def __init__(self, data_dir, data_name, hpa, label, scope=None, concat_well_stats=False, inference=False):
         # TODO support for the dataset name
+        self.label = label
         self.inference = inference
 
         cls_file = cls_embedding_name(data_dir, data_name, hpa=hpa)
@@ -242,16 +243,26 @@ class RefClsPseudo(Dataset):
 
         if self.inference:
             self.Y = None
-        else:
+        elif self.label != "all":
             self.Y = load_labels(label, data_dir, data_name, scope=scope)
             self.Y = self.Y.float()
             print("Y shape:", self.Y.shape)
+        else:
+            self.labels = []
+            for l in label_types:
+                label_data = load_labels(l, data_dir, data_name, scope=scope)
+                self.labels.append(label_data.float())
+                print(f"{l} shape:", label_data.shape)
 
     def __getitem__(self, idx):
         if self.inference:
             return self.X[idx]
-        else:
+        elif self.label != "all":
             return self.X[idx], self.Y[idx]
+        else:
+            tensors = [label_data[idx] for label_data in self.labels]
+            tensors.insert(0, self.X[idx])
+            return tuple(tensors)
 
     def __len__(self):
         return len(self.X)
@@ -276,8 +287,8 @@ def intensity_name(data_dir, data_name):
     return data_dir / f"{data_name}_intensity.npy"
 
 
+label_types = ["pseudotime", "angle", "phase"]
 def load_labels(label, data_dir, data_name, scope=None):
-    label_types = ["angle", "pseudotime", "phase"]
     assert label in label_types, f"Invalid label type, must be in {label_types}"
     if label == "angle":
         label_file = angle_label_name(data_dir, data_name)
@@ -287,6 +298,8 @@ def load_labels(label, data_dir, data_name, scope=None):
         if scope is None:
             raise ValueError("Must provide boolean scope flag for phase label")
         label_file = phase_label_name(data_dir, data_name, scope)
+    else:
+        raise ValueError(f"Invalid label type {label}")
     print(f"Loading {label_file}")
     Y = torch.load(label_file)
     return Y

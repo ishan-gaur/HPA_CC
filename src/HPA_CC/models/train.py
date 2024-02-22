@@ -4,9 +4,11 @@ import torch
 import argparse
 from glob import glob
 from pathlib import Path
+from copy import deepcopy
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
-from HPA_CC.models.models import PseudoRegressor, Classifier, ConvClassifier
+from HPA_CC.models.models import PseudoRegressor, Classifier, ConvClassifier, CombinedModel
+from HPA_CC.data.dataset import label_types
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
@@ -127,7 +129,7 @@ class PseudoRegressorLit(LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def _shared_step(self, batch, batch_idx, stage):
+    def __shared_step(self, batch, batch_idx, stage):
         x, y = batch
         theta_pred = self(x)
         theta_pred = theta_pred.squeeze()
@@ -148,7 +150,7 @@ class PseudoRegressorLit(LightningModule):
         loss = torch.mean(loss)
         return loss, preds, labels
     
-    def _log_image(self, stage, name, ax):
+    def __log_image(self, stage, name, ax):
         if type(ax) == sns.JointGrid:
             fig = ax.figure
         else:
@@ -158,7 +160,7 @@ class PseudoRegressorLit(LightningModule):
         })
 
     @rank_zero_only
-    def _on_shared_epoch_end(self, preds, labels, stage):
+    def __on_shared_epoch_end(self, preds, labels, stage):
         preds, labels = torch.cat(preds), torch.cat(labels)
         preds, labels = preds.flatten(), labels.flatten()
     
@@ -172,7 +174,7 @@ class PseudoRegressorLit(LightningModule):
         ax.set_xlabel("Pseudotime")
         ax.set_ylabel("Counts")
         plt.tight_layout()
-        self._log_image(stage, "pseudotime_hist", ax)
+        self.__log_image(stage, "pseudotime_hist", ax)
         plt.close()
 
         plt.clf()
@@ -183,7 +185,7 @@ class PseudoRegressorLit(LightningModule):
         ax.set_xlabel("Theta")
         ax.set_ylabel("Counts")
         plt.tight_layout()
-        self._log_image(stage, "preds_raw_hist", ax)
+        self.__log_image(stage, "preds_raw_hist", ax)
         plt.close()
 
         # plot the residuals
@@ -195,7 +197,7 @@ class PseudoRegressorLit(LightningModule):
         label_key, resid_key = "Label Pseudotime", "Label - Pred Residuals"
         df = pd.DataFrame({label_key: labels, resid_key: residuals})
         ax = sns.jointplot(data=df, x=label_key, y=resid_key, kind="hist")
-        self._log_image(stage, "residuals", ax)
+        self.__log_image(stage, "residuals", ax)
         plt.close()
 
         # create confusion matrix
@@ -228,7 +230,7 @@ class PseudoRegressorLit(LightningModule):
         ax.xaxis.set_ticklabels([f"{i:.2f}" for i in bins[1:]])
         ax.set_ylabel("True")
         ax.yaxis.set_ticklabels([f"{i:.2f}" for i in bins[1:]])
-        self._log_image(stage, f"cm_{self.bins}", ax)
+        self.__log_image(stage, f"cm_{self.bins}", ax)
         plt.close()
 
         # create confusion matrix
@@ -262,37 +264,37 @@ class PseudoRegressorLit(LightningModule):
         ax.xaxis.set_ticklabels([f"{i:.2f}" for i in bins[1:]])
         ax.set_ylabel("True")
         ax.yaxis.set_ticklabels([f"{i:.2f}" for i in bins[1:]])
-        self._log_image(stage, f"cm", ax)
+        self.__log_image(stage, f"cm", ax)
         plt.close()
     
     def training_step(self, batch, batch_idx):
-        loss, preds, labels = self._shared_step(batch, batch_idx, "train")
+        loss, preds, labels = self.__shared_step(batch, batch_idx, "train")
         self.train_preds.append(preds)
         self.train_labels.append(labels)
         return loss
 
     def on_train_epoch_end(self):
-        self._on_shared_epoch_end(self.train_preds, self.train_labels, "train")
+        self.__on_shared_epoch_end(self.train_preds, self.train_labels, "train")
         self.train_preds, self.train_labels = [], []
 
     def validation_step(self, batch, batch_idx):
-        loss, preds, labels = self._shared_step(batch, batch_idx, "validate")
+        loss, preds, labels = self.__shared_step(batch, batch_idx, "validate")
         self.val_preds.append(preds)
         self.val_labels.append(labels)
         return loss
 
     def on_validation_epoch_end(self):
-        self._on_shared_epoch_end(self.val_preds, self.val_labels, "validate")
+        self.__on_shared_epoch_end(self.val_preds, self.val_labels, "validate")
         self.val_preds, self.val_labels = [], []
     
     def test_step(self, batch, batch_idx):
-        loss, preds, labels = self._shared_step(batch, batch_idx, "test")
+        loss, preds, labels = self.__shared_step(batch, batch_idx, "test")
         self.test_preds.append(preds)
         self.test_labels.append(labels)
         return loss
 
     def on_test_epoch_end(self):
-        self._on_shared_epoch_end(self.test_preds, self.test_labels, "test")
+        self.__on_shared_epoch_end(self.test_preds, self.test_labels, "test")
         self.test_preds, self.test_labels = [], []
 
     def configure_optimizers(self):
@@ -385,7 +387,7 @@ class ClassifierLit(LightningModule):
         })
 
         for i, class_name in enumerate(classes):
-            self.log(f"{stage}/accuracy_{class_name}", cm[i, i] / np.sum(cm[i]) if np.sum(cm[i]) > 0 else 0, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+            self.log(f"{stage}/accuracy_{class_name}", cm[i, i] / np.sum(cm[i]) if np.sum(cm[i]) > 0 else 0, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
     def training_step(self, batch, batch_idx):
         loss, preds, labels = self.__shared_step(batch, batch_idx, "train")
@@ -416,6 +418,251 @@ class ClassifierLit(LightningModule):
     def on_test_epoch_end(self):
         self.__on_shared_epoch_end(self.test_preds, self.test_labels, "test")
         self.test_preds, self.test_labels = [], []
+
+    def configure_optimizers(self):
+        return optim.Adam(self.parameters(), lr=self.lr)
+
+
+class CombinedModelLit(LightningModule):
+    """
+    Lightning module for training a regression model
+    Supports logging for:
+    - MSE loss
+    - Histogram of predicted pseudotimes
+    - Psuedotime residuals
+    """
+    def __init__(self,
+        d_input: int = 1024,
+        d_hidden: int = 4 * 1024,
+        n_hidden: int = 1,
+        d_repr: int = 1,
+        lr: float = 1e-4,
+        loss_weights: list = [1, 1, 1],
+        dropout: bool = False,
+        batchnorm: bool = False,
+        loss_type: str = "arc",
+        reweight_loss: bool = False,
+        bins: int = 10,
+        soft: bool = False,
+        focal: bool = False,
+        alpha = None,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        if not isinstance(alpha, torch.Tensor) and alpha is not None:
+            alpha = torch.Tensor(alpha)
+        self.model = CombinedModel(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_repr=d_repr, dropout=dropout, 
+                                    batchnorm=batchnorm, focal=focal, alpha=alpha)
+        self.model = torch.compile(self.model)
+        self.lr = lr
+        self.cache_dict = {l: [] for l in label_types}
+        self.train_preds, self.val_preds, self.test_preds = deepcopy(self.cache_dict), deepcopy(self.cache_dict), deepcopy(self.cache_dict)
+        self.train_labels, self.val_labels, self.test_labels = deepcopy(self.cache_dict), deepcopy(self.cache_dict), deepcopy(self.cache_dict)
+        self.loss_type = loss_type
+        self.reweight_loss = reweight_loss
+        self.bins = bins
+        self.soft = soft
+        self.focal = focal
+        self.loss_weights = loss_weights
+        if self.soft and self.focal:
+            warn("Soft and focal loss are both enabled, soft loss will be coerced into regular cross entropy loss")
+        self.num_classes = 4
+
+    def forward(self, x):
+        return self.model(x)
+
+    def __append_cache(self, preds, labels, label, stage):
+        if stage not in ["train", "validate", "test"]:
+            raise ValueError(f"Stage {stage} is not valid")
+        if stage == "train":
+            self.train_preds[label].append(preds)
+            self.train_labels[label].append(labels)
+        elif stage == "validate":
+            self.val_preds[label].append(preds)
+            self.val_labels[label].append(labels)
+        else:
+            self.test_preds[label].append(preds)
+            self.test_labels[label].append(labels)
+
+    def __shared_step(self, batch, stage):
+        x, pseudo, angle, phase = batch # per the RefCLSDM class "all" label setting
+        raw_pseudo_pred, raw_angle_pred, phase_pred = self(x)
+        pseudo_loss, pseudo_preds, pseudo_labels = self.__shared_regressor_step(raw_pseudo_pred, pseudo, stage, "pseudotime")
+        angle_loss, angle_preds, angle_labels = self.__shared_regressor_step(raw_angle_pred, angle, stage, "angle")
+        phase_loss, phase_preds, phase_labels = self.__shared_classifier_step(phase_pred, phase, stage)
+        self.__append_cache(pseudo_preds, pseudo_labels, "pseudotime", stage)
+        self.__append_cache(angle_preds, angle_labels, "angle", stage)
+        self.__append_cache(phase_preds, phase_labels, "phase", stage)
+        loss = 0
+        for loss_term, weight in zip([pseudo_loss, angle_loss, phase_loss], self.loss_weights):
+            loss += weight * loss_term
+        self.log(f"{stage}/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        return loss
+
+    def __shared_regressor_step(self, theta_pred, y, stage, label):
+        theta_pred = theta_pred.squeeze()
+        y = y.squeeze()
+        arc_loss = self.model.arc_loss(theta_pred, y)
+        preds, labels = theta_pred.detach().cpu(), y.detach().cpu()
+        self.log(f"{stage}/{label}_arc_loss", torch.mean(arc_loss), on_step=True, on_epoch=True, logger=True, sync_dist=True)
+        if self.reweight_loss:
+            loss = self.model.bin_reweight(arc_loss, y, self.bins)
+            self.log(f"{stage}/{label}_arc_loss_reweighted", torch.mean(loss), on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        loss = torch.mean(loss)
+        return loss, preds, labels
+
+    def __shared_classifier_step(self, y_pred, y, stage):
+        label_y = torch.argmax(y, dim=-1)
+        label_loss = self.model.phase_loss(y_pred, label_y, loss_type="cross_entropy" if self.focal else None)
+        self.log(f"{stage}/xe_loss", label_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+
+        soft_y = torch.exp(y) # y is weighted log-probs for each class
+        soft_loss = self.model.phase_loss(y_pred, soft_y)
+        self.log(f"{stage}/soft_loss", soft_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+
+        loss = soft_loss if self.soft else label_loss
+        preds = torch.argmax(y_pred, dim=-1)
+        labels = label_y
+
+        preds, labels = preds.detach().cpu().numpy(), labels.detach().cpu().numpy()
+        return loss, preds, labels
+    
+    def __log_image(self, stage, name, ax):
+        if type(ax) == sns.JointGrid:
+            fig = ax.figure
+        else:
+            fig = ax.get_figure()
+        self.logger.experiment.log({
+            f"{stage}/{name}": wandb.Image(fig),
+        })
+
+    def __on_shared_epoch_end(self, preds, labels, stage):
+        self.__on_epoch_end_pseudotime(preds["pseudotime"], labels["pseudotime"], stage)
+        self.__on_epoch_end_angle(preds["angle"], labels["angle"], stage)
+        self.__on_epoch_end_phase(preds["phase"], labels["phase"], stage)
+
+    @rank_zero_only
+    def __on_epoch_end_pseudotime(self, preds, labels, stage):
+        preds, labels = torch.cat(preds), torch.cat(labels)
+        preds, labels = preds.flatten(), labels.flatten()
+    
+        # plot the intensity kdeplot
+        plt.clf()
+        plt.title("Predicted Pseudotime Distribution")
+        preds_pseudotime = PseudoRegressor.angle_to_pseudo(preds)
+        ax = sns.histplot(preds_pseudotime, bins=50)
+        ax.set_xlabel("Pseudotime")
+        ax.set_ylabel("Counts")
+        plt.tight_layout()
+        self.__log_image(stage, "pseudotime_hist", ax)
+        plt.close()
+
+        plt.clf()
+        plt.title("Raw Prediction Distribution")
+        ax = sns.histplot(preds, bins=50)
+        ax.set_xlabel("Theta")
+        ax.set_ylabel("Counts")
+        plt.tight_layout()
+        self.__log_image(stage, "pseudo_raw_preds_hist", ax)
+        plt.close()
+
+        # plot the residuals
+        plt.clf()
+        plt.title("Residuals")
+        residuals = PseudoRegressor.arc_distance(preds, labels)
+        label_key, resid_key = "Label Pseudotime", "Label - Pred Residuals"
+        df = pd.DataFrame({label_key: labels, resid_key: residuals})
+        ax = sns.jointplot(data=df, x=label_key, y=resid_key, kind="hist")
+        self.__log_image(stage, "pseudo_residuals", ax)
+        plt.close()
+    
+    @rank_zero_only
+    def __on_epoch_end_angle(self, preds, labels, stage):
+        preds, labels = torch.cat(preds), torch.cat(labels)
+        preds, labels = preds.flatten(), labels.flatten()
+    
+        # plot the intensity kdeplot
+        plt.clf()
+        plt.title("Predicted Angular Distribution")
+        preds_angle = PseudoRegressor.angle_to_pseudo(preds)
+        ax = sns.histplot(preds_angle, bins=50)
+        ax.set_xlabel("Angle (Rescaled)")
+        ax.set_ylabel("Counts")
+        plt.tight_layout()
+        self.__log_image(stage, "angular_hist", ax)
+        plt.close()
+
+        plt.clf()
+        plt.title("Raw Angular Distribution")
+        ax = sns.histplot(preds, bins=50)
+        ax.set_xlabel("Theta")
+        ax.set_ylabel("Counts")
+        plt.tight_layout()
+        self.__log_image(stage, "angle_raw_preds_hist", ax)
+        plt.close()
+
+        # plot the residuals
+        plt.clf()
+        plt.title("Residuals")
+        residuals = PseudoRegressor.arc_distance(preds, labels)
+        label_key, resid_key = "Label Pseudotime", "Label - Pred Residuals"
+        df = pd.DataFrame({label_key: labels, resid_key: residuals})
+        ax = sns.jointplot(data=df, x=label_key, y=resid_key, kind="hist")
+        self.__log_image(stage, "angle_residuals", ax)
+        plt.close()
+
+    @rank_zero_only
+    def __on_epoch_end_phase(self, preds, labels, stage):
+        plt.clf()
+        if self.num_classes == 3:
+            classes = ["G1", "S", "G2"]
+        elif self.num_classes == 6:
+            classes = ["Stop-G1", "G1", "G1-S", "S-G2", "G2", "G2-M"]
+        elif self.num_classes == 4:
+            classes = ["M-G1", "G1", "S-G2", "G2"]
+        preds, labels = np.concatenate(preds), np.concatenate(labels)
+        filler = np.arange(self.num_classes)
+        preds = np.concatenate((preds, filler))
+        labels = np.concatenate((labels, filler))
+        cm = confusion_matrix(labels, preds)
+        cm = cm - np.identity(self.num_classes)
+        cm = cm / cm.sum(axis=0, keepdims=True)
+        cm = np.nan_to_num(cm)
+        ax = sns.heatmap(cm, vmin=0, vmax=1.0, annot=True, fmt=".2f")
+        ax.set_xlabel("Predicted")
+        ax.xaxis.set_ticklabels(classes)
+        ax.set_ylabel("True")
+        ax.yaxis.set_ticklabels(classes)
+        ax.set_title("Phase Confusion Matrix (Normalized by Predicted Class)")
+        fig = ax.get_figure()
+        self.logger.experiment.log({
+            f"{stage}/cm": wandb.Image(fig),
+        })
+
+        for i, class_name in enumerate(classes):
+            self.log(f"{stage}/accuracy_{class_name}", cm[i, i] / np.sum(cm[i]) if np.sum(cm[i]) > 0 else 0, 
+                     on_step=False, on_epoch=True, prog_bar=True, logger=True)
+
+    def training_step(self, batch, batch_idx):
+        return self.__shared_step(batch, "train")
+
+    def on_train_epoch_end(self):
+        self.__on_shared_epoch_end(self.train_preds, self.train_labels, "train")
+        self.train_preds, self.train_labels = deepcopy(self.cache_dict), deepcopy(self.cache_dict)
+
+    def validation_step(self, batch, batch_idx):
+        return self.__shared_step(batch, "validate")
+
+    def on_validation_epoch_end(self):
+        self.__on_shared_epoch_end(self.val_preds, self.val_labels, "validate")
+        self.val_preds, self.val_labels = deepcopy(self.cache_dict), deepcopy(self.cache_dict)
+    
+    def test_step(self, batch, batch_idx):
+        return self.__shared_step(batch, "test")
+
+    def on_test_epoch_end(self):
+        self.__on_shared_epoch_end(self.test_preds, self.test_labels, "test")
+        self.test_preds, self.test_labels = deepcopy(self.cache_dict), deepcopy(self.cache_dict)
 
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=self.lr)
