@@ -469,8 +469,8 @@ def crop_images(image_paths, cell_mask_paths, nuclei_mask_paths, crop_size, nuc_
                     left_edge = int(center[0] - crop_size / 2)
                     right_edge = int(center[0] + crop_size / 2)
                     if nbox[0] < left_edge and nbox[2] > right_edge:
-                        print(f"nucleus {i} is wider than crop region, bbox: {bbox}, nbox: {nbox}, center: {center}, crop_size: {crop_size}")
-                        continue
+                        print(f"Warning: nucleus {i} is wider than crop region, bbox: {bbox}, nbox: {nbox}, center: {center}, crop_size: {crop_size}")
+                        # continue
                     if nbox[0] < left_edge:
                         new_left = nbox[0] - nuc_margin
                         displacement = new_left - left_edge
@@ -491,8 +491,8 @@ def crop_images(image_paths, cell_mask_paths, nuclei_mask_paths, crop_size, nuc_
                     top_edge = int(center[1] - crop_size / 2)
                     bottom_edge = int(center[1] + crop_size / 2)
                     if nbox[1] < top_edge and nbox[3] > bottom_edge:
-                        print(f"nucleus {i} is taller than crop region, bbox: {bbox}, nbox: {nbox}, center: {center}, crop_size: {crop_size}")
-                        continue
+                        print(f"Warning: nucleus {i} is taller than crop region, bbox: {bbox}, nbox: {nbox}, center: {center}, crop_size: {crop_size}")
+                        # continue
                     if nbox[1] < top_edge:
                         new_top = nbox[1] - nuc_margin
                         displacement = top_edge - new_top

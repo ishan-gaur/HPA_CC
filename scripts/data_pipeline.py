@@ -52,11 +52,10 @@ parser.add_argument('--clean_masks', action='store_true', help='Clean masks: rem
 parser.add_argument('--filter_sharpness', action='store_true', help='Filter out blurry images based on config sharpness threshold')
 parser.add_argument('--normalize', action='store_true', help='Normalize images')
 parser.add_argument('--single_cell', action='store_true', help='Crop and save single cell images')
-parser.add_argument('--rgb', action='store_true', help='Convert images to RGB')
 parser.add_argument('--dinov2', action='store_true', help='Cache dinov2 cls embeddings')
 parser.add_argument('--dino_hpa', action='store_true', help='Cache DINO HPA cls embeddings on reference channels only')
 parser.add_argument('--int_dist', action='store_true', help='Concatenate intensity distributions to embeddings')
-parser.add_argument('--fucci_gmm', action='store_true', help='Fit GMM to FUCCI intensities')
+parser.add_argument('--image_level', action='store_true', help='Calculate image-level intensity distributions')
 parser.add_argument('--labels', action='store_true', help='Calculate angular, pseudotime, and phase class labels for the samples')
 parser.add_argument('--scope', action='store_true', help='Calculate phase labels using a GMM trained at the microscope level')
 parser.add_argument('--batch_size', type=int, default=10, help='Batch size for dino inference')
@@ -329,20 +328,9 @@ if args.single_cell or args.all:
 
         dataset_config = config
 
-# if args.rgb or args.all:
-#     assert not no_name, "Name of dataset must be specified"
-#     assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
-#     if SimpleDataset.has_cache_files(RGB_DATASET) and not args.rebuild:
-#         print("RGB images file already exists, skipping. Set --rebuild to overwrite.")
-#     else:
-#         print("Creating RGB images")
-#         assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
-#         assert CONFIG_FILE.exists(), "Config file does not exist for the dataset, something might have gone wrong when you ran --single_cell"
-#         dataset = CellImageDataset(NAME_INDEX, dataset_config.cmaps, batch_size=args.batch_size)
-#         rgb_dataset = dataset.as_rgb()
-#         rgb_dataset.save(RGB_DATASET)
-
 if args.int_dist or args.all:
+    # load the mask files for each in stride and get the number of cells, use that to aggregate by image in the inner loop
+    # keep all the same dims and naming conventions so we can just run a new model then
     print("Caching well intensity distributions for each sample")
     if INT_DATASET.exists() and not args.rebuild:
         print("Intensity distributions file already exists, skipping. Set --rebuild to overwrite.")
@@ -352,16 +340,25 @@ if args.int_dist or args.all:
         assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
         print("Concatenating intensity distributions to embeddings")
         channels = [dataset_config.dapi, dataset_config.tubl]
-        dataset = CellImageDataset(NAME_INDEX, channels=channels, batch_size=args.batch_size)
+        if args.image_level:
+            dataset = CellImageDataset(NAME_INDEX, mask_index=NORM_INDEX, channels=channels, batch_size=args.batch_size)
+        else:
+            dataset = CellImageDataset(NAME_INDEX, channels=channels, batch_size=args.batch_size)
         well_iterator = iter(dataset)
         percentiles = np.linspace(0, 100, buckets)
         well_percentiles = []
         for well_images in tqdm(well_iterator, total=dataset.iter_len(), desc="Getting intensity distributions"):
-            well_int_levels, _ = get_batch_percentiles(well_images.cpu().numpy(), percentiles)
+        # for well_images in tqdm(well_iterator, desc="Getting intensity distributions"):
+            if len(well_images) == 0:
+                print("No cells in image, skipping")
+                continue
+            images_copy = well_images.clone()
+            well_int_levels, _ = get_batch_percentiles(images_copy.cpu().numpy(), percentiles)
             well_percentiles.append(np.array([well_int_levels for _ in range(len(well_images))]))
         well_percentiles = np.concatenate(well_percentiles)
         well_percentiles = np.concatenate((well_percentiles[:, 0], well_percentiles[:, 1]), axis=1)
         well_percentiles = torch.tensor(well_percentiles)
+        assert len(dataset) == well_percentiles.shape[0], f"Length of dataset {len(dataset)} does not match length of well_percentiles {well_percentiles.shape[0]}"
         torch.save(well_percentiles, INT_DATASET)
         print(well_percentiles.shape)
 
@@ -424,44 +421,6 @@ elif args.dino_hpa or args.all:
         embeddings = torch.cat(embeddings)
         torch.save(embeddings, EMBEDDINGS_DATASET)
         print(f"Saved embeddings with shape {embeddings.shape} at {EMBEDDINGS_DATASET}")
-
-# if args.fucci_gmm or args.all:
-#     from sklearn.mixture import GaussianMixture
-#     from HPA_CC.data.dataset import CellImageDataset, SimpleDataset
-#     assert not no_name, "Name of dataset must be specified"
-#     assert NAME_INDEX.exists(), "Index file for single cell images does not exist, run --single_cell first"
-#     if GMM_PROBS.exists() and not args.rebuild:
-#         print("GMM probabilities file already exists, skipping. Set --rebuild to overwrite.")
-#     else:
-#         dataset = CellImageDataset(NAME_INDEX)
-#         dataloader = DataLoader(dataset, batch_size=1000, num_workers=1, shuffle=False)
-#         FUCCI_intensities = []
-#         for batch in tqdm(iter(dataloader), desc="Getting FUCCI intensities"):
-#             FUCCI_intensities.append(torch.mean(batch[:, 2:], dim=(2, 3)))
-#         FUCCI_intensities = torch.cat(FUCCI_intensities)
-#         FUCCI_intensities = torch.log10(FUCCI_intensities + 1e-6)
-#         plt.clf()
-#         sns.kdeplot(x=FUCCI_intensities[:, 0], y=FUCCI_intensities[:, 1])
-#         plt.savefig(DATA_DIR / f"fucci_plot_{args.name}.png")
-#         plt.clf()
-
-#         print("Creating GMM")
-#         gmm = GaussianMixture(n_components=3)
-#         gmm.fit(FUCCI_intensities)
-#         pickle.dump(gmm, open(GMM_PATH, "wb"))
-#         print("Saved GMM to pickle file at " + str(GMM_PATH))
-
-#         print("Creating GMM probabilities")
-#         probs = gmm.predict_proba(FUCCI_intensities)
-#         probs = torch.tensor(probs)
-#         torch.save(probs, GMM_PROBS)
-#         print("Saved GMM probabilities to torch .pt file at " + str(GMM_PROBS))
-#         GMM_PLOT = OUTPUT_DIR / f"gmm_plot_{args.name}.png"
-#         plt.clf()
-#         sns.kdeplot(x=FUCCI_intensities[:, 0], y=FUCCI_intensities[:, 1], hue=probs.argmax(dim=1), palette="Set2")
-#         plt.savefig(GMM_PLOT)
-#         plt.clf()
-#         print("Saved GMM plot to " + str(GMM_PLOT))
 
 if args.labels or args.all:
     print("Calculating angular, pseudotime, and phase class labels for the samples")

@@ -44,7 +44,7 @@ class TrainerLogger:
             save_dir=wandb_dir,
             config=config
         )
-        self.wandb_log.watch(model, log="all", log_freq=10)
+        # self.wandb_log.watch(model, log="all", log_freq=10)
 
 
         val_checkpoint_callback = ModelCheckpoint(
@@ -308,21 +308,21 @@ class ClassifierLit(LightningModule):
         d_hidden = None,
         n_hidden: int = 0,
         d_output: int = 3,
-        lr: float = 5e-5,
+        lr: float = 1e-5,
         soft: bool = False,
         focal: bool = False,
         alpha = None,
-        dropout: bool = False,
-        batchnorm: bool = False,
+        gamma: float = 2.0,
+        dropout: bool = True,
+        batchnorm: bool = True,
     ):
         super().__init__()
         if d_hidden is None:
             d_hidden = d_input
-        self.save_hyperparameters()
         if not isinstance(alpha, torch.Tensor) and alpha is not None:
             alpha = torch.Tensor(alpha)
         if conv:
-            self.model = ConvClassifier(focal=focal, alpha=alpha, d_output=d_output)
+            self.model = ConvClassifier(focal=focal, alpha=alpha, gamma=gamma, d_output=d_output, drop_rate=(0.5 if dropout else 0.0))
         else:
             self.model = Classifier(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_output=d_output, focal=focal,
                                     alpha=alpha, dropout=dropout, batchnorm=batchnorm)
@@ -334,7 +334,10 @@ class ClassifierLit(LightningModule):
         self.focal = focal
         if self.soft and self.focal:
             warn("Soft and focal loss are both enabled, soft loss will be coerced into regular cross entropy loss")
+        self.gamma = gamma
+        self.alpha = alpha
         self.num_classes = d_output
+        self.save_hyperparameters()
 
     def forward(self, x):
         return self.model(x)
@@ -349,7 +352,7 @@ class ClassifierLit(LightningModule):
 
         # soft_y = torch.exp(y) / torch.sum(torch.exp(y), dim=-1, keepdim=True)
         soft_y = torch.exp(y)
-        soft_loss = self.model.loss(y_pred, soft_y)
+        soft_loss = self.model.loss(y_pred, soft_y, focal=self.focal, gamma=self.gamma, alpha=self.alpha)
         self.log(f"{stage}/soft_loss", soft_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
 
         loss = soft_loss if self.soft else label_loss

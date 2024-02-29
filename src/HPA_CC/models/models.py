@@ -147,17 +147,30 @@ class Classifier(nn.Module):
         return self.loss_fn(x, y)
 
 class ConvClassifier(nn.Module):
-    def __init__(self, focal: bool = True, alpha = None, d_output: int = 3):
+    def __init__(self, 
+                 focal: bool = True,
+                 alpha = None,
+                 gamma = 2.0,
+                 d_output: int = 3,
+                 drop_rate: float = 0.5,
+                ):
         super().__init__()
         # self.model = DenseNetHPA(d_output=d_output)
         self.model = DenseNet(block_config=(6, 12, 32, 24), growth_rate=32,
-            num_classes=4, n_input_channels=2, small_inputs=False, efficient=True)
-        self.loss_fn = nn.CrossEntropyLoss() if not focal else FocalLoss(alpha=alpha)
+            num_classes=4, n_input_channels=2, small_inputs=False, efficient=True, drop_rate=drop_rate)
+        self.focal, self.alpha, self.gamma = focal, alpha, gamma
 
     def forward(self, x):
         return self.model(x)
 
-    def loss(self, x, y, loss_type=None):
+    def loss(self, x, y, loss_type=None, focal=None, alpha=None, gamma=None):
+        if focal is None:
+            focal = self.focal
+        if alpha is None:
+            alpha = self.alpha
+        if gamma is None:
+            gamma = self.gamma
+        self.loss_fn = nn.CrossEntropyLoss() if not focal else FocalLoss(alpha=alpha, gamma=gamma)
         if loss_type == "cross_entropy":
             x = nn.Softmax(dim=-1)(x)
             return nn.CrossEntropyLoss()(x, y)

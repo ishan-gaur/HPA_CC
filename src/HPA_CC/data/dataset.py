@@ -1,5 +1,7 @@
 from pathlib import Path
 import torch    
+from torch import nn
+from kornia.augmentation import RandomGamma, RandomBrightness, RandomAffine
 from torch.utils.data import Dataset, DataLoader, random_split
 from microfilm.microplot import microshow
 from microfilm.colorify import multichannel_to_rgb
@@ -33,16 +35,25 @@ class DatasetFS:
 
 class CellImageDataset(Dataset):
     # images are C x H x W
-    def __init__(self, index_file, channel_colors=None, channels=None, batch_size=500):
+    def __init__(self, index_file, mask_index=None, channel_colors=None, channels=None, batch_size=500):
         self.data_dir = Path(index_file).parent
         self.dataset_fs = DatasetFS(self.data_dir)
         image_paths, _, _ = load_index_paths(index_file)
+        if mask_index is not None:
+            _, mask_paths, _ = load_index_paths(mask_index)
         self.n_cells = []
         for i in tqdm(range(0, len(image_paths), batch_size), desc="Loading dataset images"):
             image_tensors = []
-            for image_path in image_paths[i:i+batch_size]:
+            for j in range(i, min(len(image_paths), i + batch_size)):
+                image_path = image_paths[j]
                 image_tensors.append(torch.load(Path(image_path)))
-                self.n_cells.append(image_tensors[-1].shape[0])
+                if mask_index is None:
+                    cell_ct = [image_tensors[-1].shape[0]]
+                else:
+                    mask_path = mask_paths[j]
+                    masks = np.load(Path(mask_path))
+                    cell_ct = [len(np.unique(m)) - 1 for m in masks]
+                self.n_cells.extend(cell_ct)
             image_tensors = torch.concat(image_tensors)
             if i == 0:
                 self.images = image_tensors
@@ -183,7 +194,7 @@ class RefCLSDM(LightningDataModule):
     Data module for training a classifier on top of DINO embeddings of DAPI+TUBL reference channels
     Trying to match labels from a GMM or Ward cluster labeling algorithm of the FUCCI channel intensities
     """
-    def __init__(self, data_dir, data_name, batch_size, num_workers, label, index=None, split=None, scope=None, hpa=True, concat_well_stats=False, seed=42, inference=False):
+    def __init__(self, data_dir, data_name, batch_size, num_workers, label=None, index=None, split=None, scope=None, hpa=True, concat_well_stats=False, seed=42, inference=False):
         super().__init__()
         self.data_dir = data_dir
         self.data_name = data_name
@@ -305,40 +316,86 @@ def load_labels(label, data_dir, data_name, scope=None):
     return Y
 
 class RefImPseudo(Dataset):
-    def __init__(self, data_dir, data_name, label, scope=None):
+    def __init__(self, data_dir, data_name, inference=False, label=None, scope=None):
+        self.inference = inference
+        if not self.inference and (label is None or scope is None):
+            raise ValueError("Must provide label and scope for training")
         self.X = CellImageDataset(data_dir / f"index_{data_name}.csv", channels=[0, 1])[:]
-        self.Y = load_labels(label, data_dir, data_name, scope=scope)
         print("X shape:", self.X.shape)
-        print("Y shape:", self.Y.shape)
+        if not self.inference:
+            self.Y = load_labels(label, data_dir, data_name, scope=scope)
+            print("Y shape:", self.Y.shape)
 
     def __getitem__(self, idx):
-        return self.X[idx], self.Y[idx]
+        if not self.inference:
+            return self.X[idx], self.Y[idx]
+        else:
+            return self.X[idx]
 
     def __len__(self):
         return len(self.X)
 
-class RefImDM(LightningDataModule):
-    def __init__(self, data_dir, data_name, batch_size, num_workers, split, label, scope=None, seed=42):
+class DataAugmentation(nn.Module):
+    def __init__(self, apply_color_jitter: bool = False) -> None:
         super().__init__()
+        self._apply_color_jitter = apply_color_jitter
+        self.affine = RandomAffine(degrees=180, translate=(0.15, 0.15))
+        self.bright = RandomBrightness(brightness=(0.9, 1.1), p=0.5, clip_output=True)
+        self.gamma = RandomGamma(gamma=(0.9, 1.1), p=0.5)
+
+    @torch.no_grad() 
+    def forward(self, x):
+        x_out = self.affine(x)
+        x_out = self.bright(x_out)
+        x_out = self.gamma(x_out)
+        return x_out
+
+class RefImDM(LightningDataModule):
+    def __init__(self, data_dir, data_name, batch_size, num_workers, split=None, label="phase", inference=False, scope=None, augment=True, seed=42):
+        super().__init__()
+        self.seed = seed
         self.data_dir = data_dir
         self.data_name = data_name
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.split = split
+        self.augment = augment
+        self.inference = inference
+        if self.augment:
+            self.transform = DataAugmentation()
+        if not self.inference and self.split is None:
+            raise ValueError("Must provide split for training. The inference parameter is currently false.")
+        if not self.inference:
+            self.dataset = RefImPseudo(self.data_dir, self.data_name, label, scope=scope)
+            self.generator = torch.Generator().manual_seed(self.seed)
+            self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=self.generator)
+            self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
+        else:
+            self.dataset = RefImPseudo(self.data_dir, self.data_name, inference=self.inference)
 
-        self.dataset = RefImPseudo(self.data_dir, self.data_name, label, scope=scope)
-        generator = torch.Generator().manual_seed(seed)
-        self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=generator)
-        self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
+    def on_after_batch_transfer(self, batch, dataloader_idx):
+        x, y = batch
+        if self.trainer.training and self.augment:
+            x = self.transform(x)
+        return x, y
 
     def __shared_dataloader(self, dataset, shuffle=False):
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, shuffle=shuffle)
 
     def train_dataloader(self):
+        if self.inference:
+            return ValueError("Inference is true, no training dataloader")
         return self.__shared_dataloader(self.train_dataset, shuffle=True)
     
     def val_dataloader(self):
+        if self.inference:
+            return ValueError("Inference is true, no training dataloader")
         return self.__shared_dataloader(self.val_dataset)
     
     def test_dataloader(self):
+        if self.inference:
+            return ValueError("Inference is true, no training dataloader")
         return self.__shared_dataloader(self.test_dataset)
+
+    def inference_dataloader(self):
+        return self.__shared_dataloader(self.dataset)

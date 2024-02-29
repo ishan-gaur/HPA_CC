@@ -98,11 +98,18 @@ def sample_sharpness(images):
 
 def get_batch_percentiles(images, percentiles=[0, 25, 50, 90, 99, 99.99], non_zero=True):
     num_channels = images.shape[1]
-    images = images.transpose(1, 0, 2, 3).reshape(num_channels, -1)
+    channel_pixels = images.transpose(1, 0, 2, 3).reshape(num_channels, -1)
     if not silent: print("Calculating dataset pixel percentiles")
     if non_zero:
-        images = [channel_pixels[channel_pixels > 0] for channel_pixels in images]
-    values = np.array([np.percentile(channel_pixels, percentiles) for channel_pixels in images])
+        channel_pixels = [pixels[pixels > 0] for pixels in channel_pixels]
+    values = []
+    for c, pixels in enumerate(channel_pixels):
+        if len(pixels) == 0:
+            print(f"Warning: Channel {c} has no {'non-zero ' if non_zero else ''}pixels")
+            values.append([1.0 for _ in percentiles])
+        else:
+            values.append(np.percentile(pixels, percentiles).tolist())
+    values = np.array(values)
     return values, percentiles
 
 def get_image_percentiles(images, percentiles=[90, 99, 99.99], non_zero=True):

@@ -15,7 +15,7 @@ args = get_args()
 
 HPA = True # use HPA DINO embedding or normal
 ref_concat = True
-concat_well_stats = True
+concat_well_stats = False
 reweight = True
 focal = True
 soft = False
@@ -42,7 +42,9 @@ config = {
     "loss_type": loss_type, # TODO reg above, what is this?
     "reweight_loss": reweight, # TODO maybe start without this?
     "loss_weights": [1.0, 1.0, 1.0],
+    # "loss_weights": [1.0, 50.0, 50.0],
     "bins": 6, # How many bins to use for the reweighting
+    # "alpha": [1.0, 1.0, 1.0, 1.0],
     "alpha": [0.1, 0.25, 0.4, 0.25],
     "soft": soft,
     "focal": focal,
@@ -66,6 +68,8 @@ config = {
     "d_repr": 32,
     "dropout": True,
     "batchnorm": True,
+    # "dropout": False,
+    # "batchnorm": False,
 }
 
 
