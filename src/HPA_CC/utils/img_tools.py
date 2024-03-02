@@ -121,3 +121,12 @@ def get_image_percentiles(images, percentiles=[90, 99, 99.99], non_zero=True):
         channel_images = [[image[image > 0] for image in images] for images in channel_images]
     values = np.array([[np.percentile(image, percentiles) for image in images] for images in channel_images])
     return values, percentiles
+
+# def get_image_percentiles(images, percentiles=[90, 99, 99.99], non_zero=True):
+#     num_channels, num_images = images.shape[1], images.shape[0]
+#     channel_images = images.transpose(1, 0, 2, 3).reshape(num_channels, num_images, -1)
+#     if not silent: print("Calculating image pixel percentiles")
+#     if non_zero:
+#         channel_images = np.where(channel_images > 0, channel_images, np.nan)
+#     values = np.nanpercentile(channel_images, percentiles, axis=2)
+#     return values, percentiles

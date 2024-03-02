@@ -336,12 +336,12 @@ class RefImPseudo(Dataset):
         return len(self.X)
 
 class DataAugmentation(nn.Module):
-    def __init__(self, apply_color_jitter: bool = False) -> None:
+    def __init__(self, apply_color_jitter: bool = False, same=False) -> None:
         super().__init__()
         self._apply_color_jitter = apply_color_jitter
-        self.affine = RandomAffine(degrees=180, translate=(0.15, 0.15))
-        self.bright = RandomBrightness(brightness=(0.9, 1.1), p=0.5, clip_output=True)
-        self.gamma = RandomGamma(gamma=(0.9, 1.1), p=0.5)
+        self.affine = RandomAffine(degrees=180, translate=(0.15, 0.15), same_on_batch=same)
+        self.bright = RandomBrightness(brightness=(0.9, 1.1), p=0.5, clip_output=True, same_on_batch=same)
+        self.gamma = RandomGamma(gamma=(0.9, 1.1), p=0.5, same_on_batch=same)
 
     @torch.no_grad() 
     def forward(self, x):
@@ -351,7 +351,7 @@ class DataAugmentation(nn.Module):
         return x_out
 
 class RefImDM(LightningDataModule):
-    def __init__(self, data_dir, data_name, batch_size, num_workers, split=None, label="phase", inference=False, scope=None, augment=True, seed=42):
+    def __init__(self, data_dir, data_name, batch_size, num_workers, split=None, label="phase", inference=False, scope=None, augment=True, seed=42, same=False):
         super().__init__()
         self.seed = seed
         self.data_dir = data_dir
@@ -362,7 +362,7 @@ class RefImDM(LightningDataModule):
         self.augment = augment
         self.inference = inference
         if self.augment:
-            self.transform = DataAugmentation()
+            self.transform = DataAugmentation(same=same)
         if not self.inference and self.split is None:
             raise ValueError("Must provide split for training. The inference parameter is currently false.")
         if not self.inference:
