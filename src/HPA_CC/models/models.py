@@ -186,13 +186,16 @@ class CombinedModel(nn.Module):
         batchnorm: bool = False,
         focal: bool = True,
         alpha = None,
+        minimal=False,
     ):
         super().__init__()
         self.model = nn.ModuleList()
         self.dropout, self.batchnorm = dropout, batchnorm
-        self.build_model(d_input, d_hidden, n_hidden, d_repr, self.dropout, self.batchnorm)
-        self.model = nn.Sequential(*self.model)
-
+        self.minimal = minimal
+        if not minimal:
+            self.build_model(d_input, d_hidden, n_hidden, d_repr, self.dropout, self.batchnorm)
+        if minimal:
+            d_repr = d_input
         self.pseudotime = nn.Linear(d_repr, 1)
         self.angle = nn.Linear(d_repr, 1)
         self.phase = nn.ModuleList()
@@ -233,18 +236,13 @@ class CombinedModel(nn.Module):
     def angle_to_pseudo(angle):
         return angle_conversion(angle)
 
-    def pred_angle(self, x):
-        return self.angle(x)
-
-    def pred_pseudotime(self, x):
-        return self.pseudotime(x)
-
-    def pred_phase(self, x):
-        return self.phase(x)
-
     def forward(self, x):
-        for i, layer in enumerate(self.model):
-            x = layer(x)
+        if self.minimal:
+            if self.dropout:
+                x = nn.Dropout(0.5)(x)
+        else:
+            for i, layer in enumerate(self.model):
+                x = layer(x)
         return self.pseudotime(x), self.angle(x), self.phase(x)
 
     def cart_distance(theta_pred, y):

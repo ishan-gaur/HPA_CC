@@ -51,8 +51,8 @@ config = {
     "scope": scope,
 
     # training setup
-    "devices": [0, 1, 2, 3, 4, 5, 6, 7],
-    # "devices": [0],
+    # "devices": [0, 1, 2, 3, 4, 5, 6, 7],
+    "devices": [2],
     "num_workers": 1,
     "split": (0.64, 0.16, 0.2), # TODO need to make this so that you send the split per subset and print the actual split and log later
     "batch_size": 64,
@@ -63,7 +63,7 @@ config = {
     "epochs": args.epochs,
 
     # model parameters
-    "n_hidden": 3,
+    "n_hidden": 0,
     "d_hidden": DINO_INPUT * 2,
     "d_repr": 32,
     "dropout": True,
@@ -99,8 +99,8 @@ model.loss_type = config["loss_type"]
 model.reweight_loss = config["reweight_loss"]
 model.bins = config["bins"]
 
-# from torchinfo import summary
-# print(summary(model, (32, 2048)))
+from torchinfo import summary
+print(summary(model, (32, 2048)))
 
 ##########################################################################################
 # Train and test

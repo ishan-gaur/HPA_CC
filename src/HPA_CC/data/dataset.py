@@ -235,7 +235,7 @@ class RefClsPseudo(Dataset):
     Needs to handle whether or not to concatenate well intensity statistics onto the embeddings
     Needs to be able to read out each microscope in the data
     """
-    def __init__(self, data_dir, data_name, hpa, label, scope=None, concat_well_stats=False, inference=False):
+    def __init__(self, data_dir, data_name, hpa, label=None, scope=None, concat_well_stats=False, inference=False):
         # TODO support for the dataset name
         self.label = label
         self.inference = inference
@@ -366,7 +366,7 @@ class RefImDM(LightningDataModule):
         if not self.inference and self.split is None:
             raise ValueError("Must provide split for training. The inference parameter is currently false.")
         if not self.inference:
-            self.dataset = RefImPseudo(self.data_dir, self.data_name, label, scope=scope)
+            self.dataset = RefImPseudo(self.data_dir, self.data_name, label=label, scope=scope, inference=self.inference)
             self.generator = torch.Generator().manual_seed(self.seed)
             self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=self.generator)
             self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
