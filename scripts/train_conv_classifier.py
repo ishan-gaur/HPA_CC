@@ -23,9 +23,9 @@ config = {
     "alpha": None, # to reweight the focal loss terms per class
     "gamma": 3.0, # how focal is the focal loss, default is
     "batch_size": 32,
-    # "devices": [0],
-    # "devices": [1],
-    "devices": [2],
+    "devices": [0],
+    "devices": [1],
+    # "devices": [2],
     "num_workers": 1,
     "split": (0.64, 0.16, 0.2), # TODO need to make this so that you send the split per subset and print the actual split and log later
     "lr": 1e-4,
