@@ -64,7 +64,7 @@ class CellImageDataset(Dataset):
 
         if not silent: print(f"Loaded {len(self.images)} images from {len(image_paths)} files.")
         
-        self.channels = channels if channels is not None else list(range(len(channels)))
+        self.channels = channels if channels is not None else list(range(self.images.shape[1]))
         self.channel_colors = channel_colors if channel_colors is not None else None
         self.channel_names = load_channel_names(self.data_dir)
         self.channel_names = [self.channel_names[c] if c is not None else "Padding" for c in self.channels]
@@ -194,7 +194,9 @@ class RefCLSDM(LightningDataModule):
     Data module for training a classifier on top of DINO embeddings of DAPI+TUBL reference channels
     Trying to match labels from a GMM or Ward cluster labeling algorithm of the FUCCI channel intensities
     """
-    def __init__(self, data_dir, data_name, batch_size, num_workers, label=None, index=None, split=None, scope=None, hpa=True, concat_well_stats=False, seed=42, inference=False):
+    def __init__(self, data_dir, data_name, batch_size, num_workers, label=None, index=None, split=None,
+                 scope=None, hpa=True, concat_well_stats=False, seed=42, inference=False, unsup_dataset=None,
+                 model=None, device="cuda:0"):
         super().__init__()
         self.data_dir = data_dir
         self.data_name = data_name
@@ -202,6 +204,7 @@ class RefCLSDM(LightningDataModule):
         self.num_workers = num_workers
         self.split = split
         self.inference = inference
+        self.unsup_dataset = unsup_dataset
 
         if not self.inference and self.split is None:
             raise ValueError("Must provide split for training")
@@ -214,11 +217,26 @@ class RefCLSDM(LightningDataModule):
         else:
             self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=generator)
             self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
+            if unsup_dataset is not None:
+                self.train_dataset.X = torch.cat((self.train_dataset.X, self.unsup_dataset.X))
+                Y_shape = self.train_dataset.Y.shape
+                Y_shape = (self.unsup_dataset.Y.shape[0], *Y_shape[1:])
+                self.train_dataset.Y = torch.cat((self.train_dataset.Y, torch.zeros_like(self.unsup_dataset.Y)))
+                self.model = model
 
     def shared_dataloader(self, dataset, shuffle=False):
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, shuffle=shuffle)
 
     def train_dataloader(self):
+        if self.unsup_dataset is not None:
+            self.model.eval()
+            unsup_dataloader = self.shared_dataloader(self.unsup_dataset.X)
+            self.model.to(self.device)
+            Y = []
+            for batch in iter(unsup_dataloader):
+                Y.append(self.model(batch.to(self.device)))
+            Y = torch.cat(Y)
+            self.train_dataset.Y[len(self.split_indices["train"]):] = Y
         return self.shared_dataloader(self.train_dataset, shuffle=True)
     
     def val_dataloader(self):

@@ -449,12 +449,13 @@ class CombinedModelLit(LightningModule):
         soft: bool = False,
         focal: bool = False,
         alpha = None,
+        minimal: bool = False,
     ):
         super().__init__()
         self.save_hyperparameters()
         if not isinstance(alpha, torch.Tensor) and alpha is not None:
             alpha = torch.Tensor(alpha)
-        self.model = CombinedModel(d_input=d_input, d_hidden=d_hidden, n_hidden=n_hidden, d_repr=d_repr, dropout=dropout, 
+        self.model = CombinedModel(d_input=d_input, minimal=minimal, d_hidden=d_hidden, n_hidden=n_hidden, d_repr=d_repr, dropout=dropout, 
                                     batchnorm=batchnorm, focal=focal, alpha=alpha)
         self.model = torch.compile(self.model)
         self.lr = lr
