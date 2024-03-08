@@ -58,6 +58,7 @@ parser.add_argument('--int_dist', action='store_true', help='Concatenate intensi
 parser.add_argument('--image_level', action='store_true', help='Calculate image-level intensity distributions')
 parser.add_argument('--labels', action='store_true', help='Calculate angular, pseudotime, and phase class labels for the samples')
 parser.add_argument('--scope', action='store_true', help='Calculate phase labels using a GMM trained at the microscope level')
+parser.add_argument('--split_scope', action='store_true', help='Filter the given dataset into datasets for each microscope')
 parser.add_argument('--batch_size', type=int, default=10, help='Batch size for dino inference')
 parser.add_argument('--device', type=int, default=7, help='GPU device number')
 parser.add_argument('--rebuild', action='store_true', help='Rebuild specifed steps even if files exist')
@@ -509,3 +510,54 @@ if args.labels or args.all:
         plt.savefig(OUTPUT_DIR / f"well_pseudotime_labels_{args.name}.png")
         plt.close()
         
+if args.split_scope:
+    print("Splitting dataset into datasets for each microscope")
+    assert not no_name, "Name of dataset must be specified"
+    assert NAME_INDEX.exists(), "Index file for single cell image dataset does not exist, run --single_cell first"
+    assert PHASE_LABELS.exists(), "Phase labels file does not exist, run --labels first"
+    assert ANGULAR_LABELS.exists(), "Angular labels file does not exist, run --labels first"
+    assert PSEUDOTIME_LABELS.exists(), "Pseudotime labels file does not exist, run --labels first"
+    assert INTENSITY_DATA.exists(), "Intensity data file does not exist, run --labels first"
+    assert EMBEDDINGS_DATASET.exists(), "Embeddings file does not exist, run --dino_hpa or --dinov2 first"
+    assert dataset_config is not None, "Dataset config file must be specified via name, this means that the config for this data doesn't exist or doesn't make the provided name"
+    
+    from pprint import pprint
+    img_paths, cell_mask_paths, nuclei_mask_paths = load_index_paths(NAME_INDEX)
+    pprint(img_paths)
+    scopes = ["chamber", "tilescan", "overview"]
+    def filter_scope(paths, scope):
+        filtered_paths = [path for path in paths if scope in path.parent.name]
+        filtered_indices = [i for i, path in enumerate(paths) if scope in path.parent.name]
+        return filtered_paths, filtered_indices
+    cell_counts = CellImageDataset(NAME_INDEX, batch_size=args.batch_size).n_cells # without mask index, this is still well-level
+    for scope in scopes:
+        scope_name = f"{args.name}_{scope}"
+        scope_path = NAME_INDEX.parent / f"index_{scope_name}.csv"
+        filtered_img_paths, filtered_indices = filter_scope(img_paths, scope)
+        filtered_cell_mask_paths, _ = filter_scope(cell_mask_paths, scope)
+        filtered_nuclei_mask_paths, _ = filter_scope(nuclei_mask_paths, scope)
+        create_data_path_index(filtered_img_paths, filtered_cell_mask_paths, filtered_nuclei_mask_paths, scope_path, overwrite=True)
+
+        filtered_cell_indices = []
+        cell_idx = 0
+        for i, n_cells in enumerate(cell_counts):
+            if i in filtered_indices:
+                filtered_cell_indices.extend(list(range(cell_idx, cell_idx + n_cells)))
+            cell_idx += n_cells
+        pt_labels_path = pseudotime_label_name(DATA_DIR, scope_name)
+        ang_labels_path = angle_label_name(DATA_DIR, scope_name)
+        phase_labels_path = phase_label_name(DATA_DIR, scope_name, args.scope)
+
+        from HPA_CC.utils.pseudotime import stretch_time
+        pt_labels = torch.load(PSEUDOTIME_LABELS)[filtered_cell_indices]
+        pt_labels = torch.tensor(stretch_time(pt_labels.numpy()))
+        torch.save(pt_labels, pt_labels_path)
+        torch.save(torch.load(ANGULAR_LABELS)[filtered_cell_indices], ang_labels_path)
+        torch.save(torch.load(PHASE_LABELS)[filtered_cell_indices], phase_labels_path)
+
+        int_data_path = intensity_name(DATA_DIR, scope_name)
+        np.save(int_data_path, np.load(INTENSITY_DATA)[filtered_cell_indices])
+
+        emb_data_path = cls_embedding_name(DATA_DIR, scope_name, hpa=(not args.dinov2))
+        torch.save(torch.load(EMBEDDINGS_DATASET)[filtered_cell_indices], emb_data_path)
+    
