@@ -54,7 +54,7 @@ config = {
 
     # training setup
     # "devices": [0, 1, 2, 3, 4, 5, 6, 7],
-    "devices": [5],
+    "devices": [7],
     # "devices": [2, 3, 4, 5],
     "num_workers": 1,
     "split": (0.64, 0.16, 0.2), # TODO need to make this so that you send the split per subset and print the actual split and log later
@@ -65,6 +65,7 @@ config = {
     "gradient_clip_val": 5e5,
     "epochs": args.epochs,
     "self-dist": True,
+    "dist-match": True,
     "noise": True,
 
     # model parameters
@@ -106,11 +107,16 @@ if config["self-dist"]:
     dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], label="all", 
                 split=config["split"], hpa=config["HPA"], concat_well_stats=config["concat_well_stats"],
                 scope=config["scope"], unsup_dataset=HPA_dm.dataset, noise=config["noise"])
+    if config["dist-match"]:
+        model.unsup = len(dm.dataset) - len(dm.unsup_dataset)
+        print(f"Unsupervised dataset start index: {model.unsup}")
+        print(f"Unsupervised dataset length: {len(dm.unsup_dataset)}")
+        print(f"Total dataset length: {len(dm.dataset)}")
+        input()
 else:
     dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], label="all", 
                 split=config["split"], hpa=config["HPA"], concat_well_stats=config["concat_well_stats"],
                 scope=config["scope"])
-
               
 # from torchinfo import summary
 # print(summary(model, (32, DINO_INPUT)))

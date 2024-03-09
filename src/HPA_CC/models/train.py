@@ -468,6 +468,7 @@ class CombinedModelLit(LightningModule):
         focal: bool = False,
         alpha = None,
         minimal: bool = False,
+        unsup: int = 0
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -489,6 +490,8 @@ class CombinedModelLit(LightningModule):
         if self.soft and self.focal:
             warn("Soft and focal loss are both enabled, soft loss will be coerced into regular cross entropy loss")
         self.num_classes = 4
+        self.unsup = unsup
+                
 
     def forward(self, x):
         return self.model(x)
@@ -530,6 +533,16 @@ class CombinedModelLit(LightningModule):
         if self.reweight_loss:
             loss = self.model.bin_reweight(arc_loss, y, self.bins)
             self.log(f"{stage}/{label}_arc_loss_reweighted", torch.mean(loss), on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+        if self.unsup and stage == "train":
+            mean_sup = torch.mean(preds[:self.unsup])
+            std_sup = torch.std(preds[:self.unsup])
+            mean_unsup = torch.mean(preds[self.unsup:])
+            std_unsup = torch.std(preds[self.unsup:])
+            l2_mean = torch.nn.functional.mse_loss(mean_sup, mean_unsup)
+            l2_std = torch.nn.functional.mse_loss(std_sup, std_unsup)
+            self.log(f"{stage}/{label}_unsup_mean", l2_mean, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+            self.log(f"{stage}/{label}_unsup_std", l2_std, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+            loss += l2_mean + l2_std
         loss = torch.mean(loss)
         return loss, preds, labels
 
@@ -545,6 +558,13 @@ class CombinedModelLit(LightningModule):
         loss = soft_loss if self.soft else label_loss
         preds = torch.argmax(y_pred, dim=-1)
         labels = label_y
+
+        if self.unsup and stage == "train":
+            y_pred_sup = torch.sum(torch.softmax(y_pred[:self.unsup], dim=1), dim=0)
+            y_pred_unsup = torch.sum(torch.softmax(y_pred[self.unsup:], dim=1), dim=0)
+            unsup_loss = torch.nn.functional.kl_div(torch.log(y_pred_unsup), y_pred_sup)
+            self.log(f"{stage}/unsup_phase_loss", unsup_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
+            loss += unsup_loss
 
         preds, labels = preds.detach().cpu().numpy(), labels.detach().cpu().numpy()
         return loss, preds, labels
