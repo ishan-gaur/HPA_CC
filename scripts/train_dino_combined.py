@@ -4,9 +4,10 @@ from pathlib import Path
 import lightning.pytorch as pl
 from HPA_CC.models.train import config_env, get_args, TrainerLogger, find_checkpoint_file, print_with_time
 from HPA_CC.models.train import CombinedModelLit
-from HPA_CC.data.dataset import RefCLSDM
+from HPA_CC.data.dataset import RefCLSDM, RefClsPseudo
 from HPA_CC.data.well_normalization import buckets
 from HPA_CC.models.dino import DINO, DINO_HPA
+from config import HPA_DS_PATH
 
 log_dirs_home = Path("/data/ishang/pseudotime_pred/")
 
@@ -63,6 +64,8 @@ config = {
     "lr": 1e-4,
     "gradient_clip_val": 5e5,
     "epochs": args.epochs,
+    "self-dist": True,
+    "noise": True,
 
     # model parameters
     "minimal": minimal,
@@ -81,11 +84,6 @@ config = {
 ##########################################################################################
 print_with_time("Setting up model and data module...")
 
-fucci_path = Path(args.data_dir)
-dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], label="all", 
-              split=config["split"], hpa=config["HPA"], concat_well_stats=config["concat_well_stats"],
-              scope=config["scope"])
-
 if args.checkpoint is not None:
     checkpoint_file = find_checkpoint_file(args.checkpoint, log_dirs_home, args.best)
     print_with_time(f"Loading checkpoint from {checkpoint_file}")
@@ -102,6 +100,18 @@ model.loss_type = config["loss_type"]
 model.reweight_loss = config["reweight_loss"]
 model.bins = config["bins"]
 
+fucci_path = Path(args.data_dir)
+if config["self-dist"]:
+    HPA_dm = RefCLSDM(HPA_DS_PATH, args.name_data, 32, 1, "all", inference=True, concat_well_stats=config["concat_well_stats"])
+    dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], label="all", 
+                split=config["split"], hpa=config["HPA"], concat_well_stats=config["concat_well_stats"],
+                scope=config["scope"], unsup_dataset=HPA_dm.dataset, noise=config["noise"])
+else:
+    dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], label="all", 
+                split=config["split"], hpa=config["HPA"], concat_well_stats=config["concat_well_stats"],
+                scope=config["scope"])
+
+              
 # from torchinfo import summary
 # print(summary(model, (32, DINO_INPUT)))
 
@@ -110,7 +120,7 @@ model.bins = config["bins"]
 ##########################################################################################
 
 print_with_time("Setting up trainer...")
-logger = TrainerLogger(model, config, args.name_run, project_name, log_dirs_home)
+logger = TrainerLogger(model, config, args.name_run, project_name, log_dirs_home, datamodule=dm, unsupervised=config["self-dist"])
 trainer = pl.Trainer(
     default_root_dir=logger.lit_dir,
     # accelerator="cpu",
@@ -121,6 +131,7 @@ trainer = pl.Trainer(
     max_epochs=config["epochs"],
     gradient_clip_val=config["gradient_clip_val"],
     callbacks=logger.callbacks,
+    reload_dataloaders_every_n_epochs=1,
 )
 
 print_with_time("Training model...")

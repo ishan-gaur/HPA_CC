@@ -6,7 +6,7 @@ from glob import glob
 from pathlib import Path
 from copy import deepcopy
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from HPA_CC.models.models import PseudoRegressor, Classifier, ConvClassifier, CombinedModel
 from HPA_CC.data.dataset import label_types
 import seaborn as sns
@@ -29,7 +29,7 @@ def config_env():
 
 
 class TrainerLogger:
-    def __init__(self, model, config, run_name, project_name, logging_home):
+    def __init__(self, model, config, run_name, project_name, logging_home, datamodule=None, update_model=None, unsupervised=False):
         self.log_folder = logging_home / f"{project_name}_{run_name}"
         if not self.log_folder.exists():
             os.makedirs(self.log_folder, exist_ok=True)
@@ -59,6 +59,24 @@ class TrainerLogger:
         latest_checkpoint_callback = ModelCheckpoint(dirpath=self.lit_dir, save_last=True)
 
         self.callbacks = [val_checkpoint_callback, latest_checkpoint_callback]
+
+        class UpdateTrainDataloader(Callback):
+            def __init__(self, dm, model):
+                self.dm = dm
+                self.model = model
+
+            def on_train_epoch_start(self, trainer, pl_module):
+                # self.dm.update_unsup(self.model)
+                # trainer.train_dataloader = self.dm.train_dataloader()
+                trainer.datamodule.update_unsup(self.model)
+                print(next(iter(trainer.train_dataloader))[1][-1])
+                print("YOOO")
+        
+        if unsupervised:
+            update_model = model if update_model is None else update_model
+            dataset_update = UpdateTrainDataloader(datamodule, update_model)
+            self.callbacks.append(dataset_update)
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="Train a model to align the FUCCI dataset reference channels with the FUCCI channels",

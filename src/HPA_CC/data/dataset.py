@@ -196,7 +196,7 @@ class RefCLSDM(LightningDataModule):
     """
     def __init__(self, data_dir, data_name, batch_size, num_workers, label=None, index=None, split=None,
                  scope=None, hpa=True, concat_well_stats=False, seed=42, inference=False, unsup_dataset=None,
-                 model=None, device="cuda:0"):
+                 noise=False):
         super().__init__()
         self.data_dir = data_dir
         self.data_name = data_name
@@ -205,6 +205,7 @@ class RefCLSDM(LightningDataModule):
         self.split = split
         self.inference = inference
         self.unsup_dataset = unsup_dataset
+        self.all = (label == "all")
 
         if not self.inference and self.split is None:
             raise ValueError("Must provide split for training")
@@ -218,25 +219,56 @@ class RefCLSDM(LightningDataModule):
             self.train_dataset, self.val_dataset, self.test_dataset = random_split(self.dataset, self.split, generator=generator)
             self.split_indices = {"train": self.train_dataset.indices, "val": self.val_dataset.indices, "test": self.test_dataset.indices}
             if unsup_dataset is not None:
-                self.train_dataset.X = torch.cat((self.train_dataset.X, self.unsup_dataset.X))
-                Y_shape = self.train_dataset.Y.shape
-                Y_shape = (self.unsup_dataset.Y.shape[0], *Y_shape[1:])
-                self.train_dataset.Y = torch.cat((self.train_dataset.Y, torch.zeros_like(self.unsup_dataset.Y)))
-                self.model = model
+                self.noise = noise
+                self.train_dataset.indices = self.train_dataset.indices + list(range(len(self.dataset), len(self.dataset) + len(self.unsup_dataset)))
+                self.train_dataset.dataset.X = torch.cat((self.dataset.X, self.unsup_dataset.X))
+                if self.all:
+                    for l, _ in enumerate(label_types):
+                        Y_shape = list(self.dataset.labels[l].shape)
+                        Y_shape[0] = len(self.unsup_dataset)
+                        Y_placeholder = torch.zeros(Y_shape)
+                        self.train_dataset.dataset.labels[l] = torch.cat((self.dataset.labels[l], Y_placeholder))
+                else:
+                    Y_shape = list(self.dataset.Y.shape)
+                    Y_shape[0] = len(self.unsup_dataset)
+                    Y_placeholder = torch.zeros(Y_shape)
+                    self.train_dataset.dataset.Y = torch.cat((self.dataset.Y, Y_placeholder))
 
     def shared_dataloader(self, dataset, shuffle=False):
         return DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, persistent_workers=True, shuffle=shuffle)
 
-    def train_dataloader(self):
+    def update_unsup(self, model):
         if self.unsup_dataset is not None:
-            self.model.eval()
-            unsup_dataloader = self.shared_dataloader(self.unsup_dataset.X)
-            self.model.to(self.device)
-            Y = []
-            for batch in iter(unsup_dataloader):
-                Y.append(self.model(batch.to(self.device)))
-            Y = torch.cat(Y)
-            self.train_dataset.Y[len(self.split_indices["train"]):] = Y
+            was_training = model.training
+            model.eval()
+            with torch.no_grad():
+                unsup_dataloader = self.shared_dataloader(self.unsup_dataset.X)
+                Y = []
+                for batch in iter(unsup_dataloader):
+                    Y.append(model(batch.to(model.device)))
+                if not self.all:
+                    Y = torch.cat(Y)
+                    self.train_dataset.dataset.Y[-len(self.unsup_dataset):] = Y
+                else:
+                    labels = [[] for _ in label_types]
+                    for y in Y:
+                        for l, name in enumerate(label_types):
+                            if name == "phase":
+                                for i in range(y[l].size(0)):
+                                    to_shift = torch.randint(y[l].size(0), (1,)) * self.noise
+                                    shift_size = (to_shift * torch.randint(low=1, high=3, size=(1,))).item()
+                                    y[l][i] = torch.roll(y[l][i], shifts=shift_size, dims=0)
+                            labels[l].append(y[l].detach().cpu())
+                    for l, name in enumerate(label_types):
+                        labels[l] = torch.cat(labels[l]).squeeze()
+                        if name != "phase":
+                                labels[l] = labels[l] + torch.randn_like(labels[l]) * 0.1 * self.noise
+                                labels[l] = labels[l].remainder(1)
+                        self.train_dataset.dataset.labels[l][-len(self.unsup_dataset):] = labels[l]
+            if was_training: 
+                model.train()
+
+    def train_dataloader(self):
         return self.shared_dataloader(self.train_dataset, shuffle=True)
     
     def val_dataloader(self):
