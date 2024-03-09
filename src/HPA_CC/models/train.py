@@ -468,7 +468,8 @@ class CombinedModelLit(LightningModule):
         focal: bool = False,
         alpha = None,
         minimal: bool = False,
-        unsup: int = 0
+        unsup: int = 0,
+        train_dataset=None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -491,7 +492,7 @@ class CombinedModelLit(LightningModule):
             warn("Soft and focal loss are both enabled, soft loss will be coerced into regular cross entropy loss")
         self.num_classes = 4
         self.unsup = unsup
-                
+        self.train_dataset = train_dataset
 
     def forward(self, x):
         return self.model(x)
@@ -534,10 +535,10 @@ class CombinedModelLit(LightningModule):
             loss = self.model.bin_reweight(arc_loss, y, self.bins)
             self.log(f"{stage}/{label}_arc_loss_reweighted", torch.mean(loss), on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         if self.unsup and stage == "train":
-            mean_sup = torch.mean(preds[:self.unsup])
-            std_sup = torch.std(preds[:self.unsup])
-            mean_unsup = torch.mean(preds[self.unsup:])
-            std_unsup = torch.std(preds[self.unsup:])
+            mean_sup = torch.mean(preds[:-self.unsup])
+            std_sup = torch.std(preds[:-self.unsup])
+            mean_unsup = torch.mean(preds[-self.unsup:])
+            std_unsup = torch.std(preds[-self.unsup:])
             l2_mean = torch.nn.functional.mse_loss(mean_sup, mean_unsup)
             l2_std = torch.nn.functional.mse_loss(std_sup, std_unsup)
             self.log(f"{stage}/{label}_unsup_mean", l2_mean, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
