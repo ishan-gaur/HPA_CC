@@ -1,6 +1,7 @@
 from glob import glob
 from pathlib import Path
 
+import torch
 import lightning.pytorch as pl
 from HPA_CC.models.train import config_env, get_args, TrainerLogger, find_checkpoint_file, print_with_time
 from HPA_CC.models.train import CombinedModelLit
@@ -108,11 +109,11 @@ if config["self-dist"]:
                 split=config["split"], hpa=config["HPA"], concat_well_stats=config["concat_well_stats"],
                 scope=config["scope"], unsup_dataset=HPA_dm.dataset, noise=config["noise"])
     if config["dist-match"]:
-        model.unsup = len(dm.dataset) - len(dm.unsup_dataset)
-        print(f"Unsupervised dataset start index: {model.unsup}")
-        print(f"Unsupervised dataset length: {len(dm.unsup_dataset)}")
-        print(f"Total dataset length: {len(dm.dataset)}")
-        input()
+        phase_labels = dm.dataset.labels[2]
+        phase_labels = torch.argmax(phase_labels, dim=1)
+        phase_label_counts = torch.bincount(phase_labels).float()
+        phase_label_dist = phase_label_counts / phase_label_counts.sum()
+        model.phase_label_dist = phase_label_dist
 else:
     dm = RefCLSDM(fucci_path, args.name_data, config["batch_size"], config["num_workers"], label="all", 
                 split=config["split"], hpa=config["HPA"], concat_well_stats=config["concat_well_stats"],
